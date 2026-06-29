@@ -27,7 +27,7 @@ sources:
       - "*.jpg"
       - "*.jpeg"
     excludePatterns:
-      - ".*"  # Versteckte Dateien ausschließen
+      - ".*" 
       - "Thumbs.db"
       - "desktop.ini"
       - "~$*"  # Temporäre Office-Dateien ausschließen
