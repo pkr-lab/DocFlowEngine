@@ -1,0 +1,24 @@
+# Registry bekannter Präfixe und Suffixe für DocFlowEngine
+#
+# Diese Datei haelt alle Präfixe (Fächer/Themen) und Suffixe fest, die
+# DocFlowEngine in Dateinamen des Schemas
+#   <initialen>_<praefix>_<suffix>_<aufgabennummer>
+#
+# Format: eine Zeile pro Eintrag
+#   praefix=<Name>
+#   suffix=<Name>
+# DocFlowEngine ergänzt diese Datei automatisch um neu erkannte Werte.
+
+praefix=Java
+suffix=Arrays
+suffix=Einfuehrung
+praefix=Python
+suffix=Einfuehrung
+praefix=SQL
+suffix=Einfuehrung
+praefix=Netzwerktechnik
+suffix=Einfuehrung
+praefix=Zahlensysteme
+suffix=Binaer
+suffix=Hexadezimal
+suffix=Oktalsystem
