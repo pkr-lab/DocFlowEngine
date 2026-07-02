@@ -351,9 +351,20 @@ function Get-TargetFileName {
 
     foreach ($rule in $Rules) {
         if ($originalName -match $rule.match) {
-            foreach ($groupName in $Matches.Keys) {
-                if ($groupName -ne '0') {
+            # Alle im Regex-Muster definierten Gruppennamen durchgehen (nicht nur
+            # $Matches.Keys): Eine optionale Gruppe, die nicht mitgematcht hat (z. B.
+            # "versiontag" ohne Versionsangabe), taucht in $Matches gar nicht erst
+            # auf. Ohne diesen Schritt bliebe der Platzhalter (z. B. "{versiontag}")
+            # unersetzt im Dateinamen stehen, statt zu einer leeren Zeichenkette zu werden.
+            foreach ($groupName in [regex]::new($rule.match).GetGroupNames()) {
+                if ($groupName -eq '0') {
+                    continue
+                }
+
+                if ($Matches.ContainsKey($groupName)) {
                     $context[$groupName] = $Matches[$groupName]
+                } else {
+                    $context[$groupName] = ''
                 }
             }
 
