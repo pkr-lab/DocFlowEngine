@@ -1,5 +1,7 @@
+#Requires -Version 5.1
+
 param(
-    [string]$ConfigPath = ".\config\docflow-config.yml",
+    [string]$ConfigPath = ".\config\docflow-config.psd1",
     [switch]$DryRun
 )
 
