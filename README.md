@@ -52,9 +52,12 @@ choco install powershell-core
 ### Szenario: Schülermaterial aus SharePoint sortieren
 
 Schüler laden Aufgaben über SharePoint (per OneDrive synchronisiert) hoch. Aufgaben-Dateien
-folgen dem Schema `<initialen>_<praefix>_<suffix>_<aufgabennummer>` (z. B. `pke_Java_Suffix_abc.pdf`)
-und werden nach `docs/Aufgaben/<Präfix>/<Suffix>/` sortiert. Alle anderen Dateien (z. B. datierte
-Rechnungen/Berichte) landen wie gewohnt in `docs/archive/`.
+folgen dem Schema `<initialen>[_v<version>]_<praefix>_<suffix>_<aufgabennummer>` (z. B.
+`pke_Java_Suffix_abc.pdf`, bei einer erneuten Abgabe `pke_v2_Java_Suffix_abc.pdf`) und werden nach
+`docs/Aufgaben/<Präfix>/<Suffix>/` sortiert. Die Versionsangabe ist optional - ohne sie funktioniert
+das Schema wie bisher, mit ihr lassen sich mehrere Abgaben derselben Aufgabe unterscheiden, statt sich
+gegenseitig zu überschreiben. Alle anderen Dateien (z. B. datierte Rechnungen/Berichte) landen wie
+gewohnt in `docs/archive/`.
 
 **Verzeichnisstruktur vor Ausführung:**
 ```
@@ -89,9 +92,9 @@ C:/Users/p0*/OneDrive - D*/SharePoint/
     namingConventions = @(
         @{
             name        = 'Initials-Praefix-Suffix-Aufgabe'
-            description = 'Format initialen_praefix_suffix_aufgabennummer (z. B. pke_Java_Suffix_abc). Das Upload-Datum wird vorangestellt.'
-            match       = '^(?<initials>[A-Za-z]+)_(?<praefix>[A-Za-z]+)_(?<suffix>[A-Za-z0-9]+)_(?<aufgabennummer>[A-Za-z0-9]+)$'
-            rename      = '{date}_{initials}_{praefix}_{suffix}_{aufgabennummer}'
+            description = 'Format initialen[_v<version>]_praefix_suffix_aufgabennummer (z. B. pke_Java_Suffix_abc oder pke_v2_Java_Suffix_abc). Das Upload-Datum wird vorangestellt.'
+            match       = '^(?<initials>[A-Za-z]+)(?<versiontag>_v[0-9]+)?_(?<praefix>[A-Za-z]+)_(?<suffix>[A-Za-z0-9]+)_(?<aufgabennummer>[A-Za-z0-9]+)$'
+            rename      = '{date}_{initials}{versiontag}_{praefix}_{suffix}_{aufgabennummer}'
         },
         @{
             name        = 'Date-prefix'
