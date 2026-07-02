@@ -350,22 +350,21 @@ function Get-TargetFileName {
     }
 
     foreach ($rule in $Rules) {
-        if ($originalName -match $rule.match) {
-            # Alle im Regex-Muster definierten Gruppennamen durchgehen (nicht nur
-            # $Matches.Keys): Eine optionale Gruppe, die nicht mitgematcht hat (z. B.
-            # "versiontag" ohne Versionsangabe), taucht in $Matches gar nicht erst
-            # auf. Ohne diesen Schritt bliebe der Platzhalter (z. B. "{versiontag}")
-            # unersetzt im Dateinamen stehen, statt zu einer leeren Zeichenkette zu werden.
-            foreach ($groupName in [regex]::new($rule.match).GetGroupNames()) {
+        # Direkt mit [regex]::Match statt dem -match-Operator/$Matches: Ein
+        # .NET Group-Objekt liefert für eine nicht mitgematchte optionale Gruppe
+        # (z. B. "versiontag" ohne Versionsangabe) garantiert .Value = '' -
+        # unabhängig davon, ob $Matches für diese Gruppe überhaupt einen
+        # Schlüssel anlegt. Damit bleibt kein Platzhalter wie "{versiontag}"
+        # unersetzt im Dateinamen stehen.
+        $regex = [regex]::new($rule.match)
+        $regexMatch = $regex.Match($originalName)
+        if ($regexMatch.Success) {
+            foreach ($groupName in $regex.GetGroupNames()) {
                 if ($groupName -eq '0') {
                     continue
                 }
 
-                if ($Matches.ContainsKey($groupName)) {
-                    $context[$groupName] = $Matches[$groupName]
-                } else {
-                    $context[$groupName] = ''
-                }
+                $context[$groupName] = $regexMatch.Groups[$groupName].Value
             }
 
             $targetName = Expand-Template -Template $rule.rename -Context $context
