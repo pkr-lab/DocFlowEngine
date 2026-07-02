@@ -216,6 +216,19 @@ function Load-Config {
         $config.log = @{ level = 'Info'; file = './docflow.log' }
     }
 
+    if (-not $config.namingConventionHint) {
+        $config.namingConventionHint = @{}
+    }
+    if (-not $config.namingConventionHint.ContainsKey('enabled')) {
+        $config.namingConventionHint.enabled = $true
+    }
+    if (-not $config.namingConventionHint.fileName) {
+        $config.namingConventionHint.fileName = 'BITTE_NAMENSKONVENTION_BEACHTEN.txt'
+    }
+    if (-not $config.namingConventionHint.message) {
+        $config.namingConventionHint.message = 'Deine Datei "{fileName}" entspricht nicht dem vorgegebenen Namensschema (initialen_praefix_suffix_aufgabennummer). Bitte benenne die Datei entsprechend um und lade sie erneut hoch.'
+    }
+
     return $config
 }
 
@@ -442,6 +455,37 @@ function Get-FilePraefixSuffix {
     return $null
 }
 
+function Write-NamingConventionHint {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [System.IO.FileInfo]$File,
+        [Parameter(Mandatory)] [hashtable]$HintConfig
+    )
+
+    if (-not $HintConfig.enabled) {
+        return
+    }
+
+    $hintPath = Join-Path $File.DirectoryName $HintConfig.fileName
+    if (Test-Path $hintPath) {
+        return
+    }
+
+    $context = [ordered]@{
+        originalName = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
+        extension = [System.IO.Path]::GetExtension($File.Name).TrimStart('.')
+        fileName = $File.Name
+    }
+    $message = Expand-Template -Template $HintConfig.message -Context $context
+
+    if ($Script:DryRun) {
+        Write-Log -Level Warning -Message "[DryRun] Datei '$($File.Name)' entspricht nicht der erwarteten Namenskonvention. Hinweis-Datei würde erstellt: '$hintPath'"
+    } else {
+        Write-Log -Level Warning -Message "Datei '$($File.Name)' entspricht nicht der erwarteten Namenskonvention. Hinweis-Datei erstellt: '$hintPath'"
+        Set-Content -Path $hintPath -Value $message -Encoding UTF8
+    }
+}
+
 function Get-PraefixSuffixRegistry {
     [CmdletBinding()]
     param(
@@ -578,7 +622,8 @@ function Copy-NewFiles {
         [string]$AufgabenRoot = $null,
         [hashtable]$PraefixSuffixRegistry = $null,
         [string]$RegistryFilePath = $null,
-        [array]$ExcludePaths = @()
+        [array]$ExcludePaths = @(),
+        [hashtable]$NamingConventionHint = $null
     )
 
     foreach ($source in $Sources) {
@@ -616,6 +661,9 @@ function Copy-NewFiles {
                         }
 
                         $routedTargetPath = Join-Path (Join-Path $AufgabenRoot $praefixSuffix.Praefix) $praefixSuffix.Suffix
+                    } elseif ($NamingConventionHint -and $NamingConventionHint.enabled) {
+                        Write-NamingConventionHint -File $item -HintConfig $NamingConventionHint
+                        continue
                     }
                 }
 
@@ -742,7 +790,7 @@ function Invoke-DocFlowEngine {
         $excludePaths += $aufgabenRoot
     }
 
-    Copy-NewFiles -Sources $config.sources -Targets $config.targets -State $state -Rules $config.namingConventions -DefaultNameFormat $config.defaultNameFormat -CategoryRoutes $categoryRoutes -AufgabenRoot $aufgabenRoot -PraefixSuffixRegistry $praefixSuffixRegistry -RegistryFilePath $registryFilePath -ExcludePaths $excludePaths
+    Copy-NewFiles -Sources $config.sources -Targets $config.targets -State $state -Rules $config.namingConventions -DefaultNameFormat $config.defaultNameFormat -CategoryRoutes $categoryRoutes -AufgabenRoot $aufgabenRoot -PraefixSuffixRegistry $praefixSuffixRegistry -RegistryFilePath $registryFilePath -ExcludePaths $excludePaths -NamingConventionHint $config.namingConventionHint
 
     if (-not $DryRun) {
         Save-State -StatePath $statePath -State $state
@@ -751,4 +799,4 @@ function Invoke-DocFlowEngine {
     Write-Log -Level Info -Message "Verarbeitung abgeschlossen."
 }
 
-Export-ModuleMember -Function Invoke-DocFlowEngine, Get-TargetFileName, Load-Config, Load-State, Save-State, Get-SourceFiles, Ensure-TargetDirectories, Resolve-PathOrAbsolute, Resolve-SourcePaths, Test-PathExcluded, Expand-Template, Write-Log, Copy-NewFiles, Get-FileCategory, Resolve-CategoryTarget, Get-FileProject, Get-ProjectRoutes, Resolve-ProjectTarget, Get-FilePraefixSuffix, Get-PraefixSuffixRegistry, Register-PraefixSuffix, ConvertTo-DocFlowHashtable, Get-DocFlowRelativePath
+Export-ModuleMember -Function Invoke-DocFlowEngine, Get-TargetFileName, Load-Config, Load-State, Save-State, Get-SourceFiles, Ensure-TargetDirectories, Resolve-PathOrAbsolute, Resolve-SourcePaths, Test-PathExcluded, Expand-Template, Write-Log, Copy-NewFiles, Get-FileCategory, Resolve-CategoryTarget, Get-FileProject, Get-ProjectRoutes, Resolve-ProjectTarget, Get-FilePraefixSuffix, Get-PraefixSuffixRegistry, Register-PraefixSuffix, ConvertTo-DocFlowHashtable, Get-DocFlowRelativePath, Write-NamingConventionHint

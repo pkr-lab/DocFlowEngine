@@ -26,7 +26,13 @@ funktioniert identisch unter PowerShell 7+ und Windows PowerShell 5.1, ganz ohne
 
 - `aufgabenRoot` - Optionales Wurzelverzeichnis für die Aufgaben-Ablage
   - Liefert eine Namenskonvention beim Matching die Gruppen `praefix` und `suffix` (z. B. Schema `<initialen>_<praefix>_<suffix>_<aufgabennummer>`), wird die Datei nach `<aufgabenRoot>/<praefix>/<suffix>/` kopiert statt in die `targets`
-  - Dateien ohne `praefix`/`suffix`-Treffer werden ganz normal über `targets` (bzw. `categoryRoutes`/`projectRoutesFile`) verarbeitet - `aufgabenRoot` schließt andere Dateien nicht aus
+  - Liefert **keine** Regel `praefix`/`suffix` (Datei entspricht nicht dem erwarteten Schema): Ist `namingConventionHint.enabled` (Standard `$true`), wird die Datei **nicht** kopiert - stattdessen siehe unten. Ist `namingConventionHint.enabled` auf `$false` gesetzt, wird die Datei stattdessen ganz normal über `targets` (bzw. `categoryRoutes`/`projectRoutesFile`) verarbeitet
+
+- `namingConventionHint` - Verhalten bei Dateien, die trotz konfiguriertem `aufgabenRoot` zu keiner Regel mit `praefix`/`suffix`-Gruppen passen (z. B. weil ein Schüler eine falsche oder unbekannte Namenskonvention benutzt hat)
+  - `enabled` - `$true`/`$false`. Bei `$true` (Standard) wird die Datei nicht kopiert; stattdessen legt DocFlowEngine im selben Ordner wie die Datei eine Hinweis-Textdatei an
+  - `fileName` - Dateiname der Hinweis-Datei (Standard `BITTE_NAMENSKONVENTION_BEACHTEN.txt`). Wird pro Ordner nur einmal angelegt (falls die Datei schon existiert, passiert nichts) - sollte in `sources[].excludePatterns` eingetragen werden, damit DocFlowEngine sie nicht selbst als "neue Datei" einliest
+  - `message` - Textvorlage für den Inhalt der Hinweis-Datei. Verfügbare Platzhalter: `{fileName}` (vollständiger Dateiname inkl. Erweiterung), `{originalName}` (ohne Erweiterung), `{extension}`
+  - Wird die betroffene Datei umbenannt und passt danach zu einer `praefix`/`suffix`-Regel, wird sie beim nächsten Lauf ganz normal kopiert
 
 - `categoryRoutes` - Optionale Zuordnung von Kategorie zu Zielordner
   - `category` - Kategoriebezeichnung (z. B. "Java"), wird gegen den führenden Buchstaben-Teil der `project`-Gruppe geprüft (`StartsWith`, ohne Berücksichtigung von Groß-/Kleinschreibung)
@@ -67,6 +73,12 @@ funktioniert identisch unter PowerShell 7+ und Windows PowerShell 5.1, ganz ohne
     )
 
     aufgabenRoot = './docs/Aufgaben'
+
+    namingConventionHint = @{
+        enabled  = $true
+        fileName = 'BITTE_NAMENSKONVENTION_BEACHTEN.txt'
+        message  = 'Deine Datei "{fileName}" entspricht nicht dem vorgegebenen Namensschema. Bitte umbenennen und erneut hochladen.'
+    }
 
     namingConventions = @(
         @{
