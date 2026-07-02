@@ -14,7 +14,7 @@
             path             = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung - Jahrgangsordner/FI*/Austauschordner/'
             recursive        = $true
             includePatterns  = @('*.pdf', '*.docx', '*.doc', '*.xlsx', '*.java', '*.zip', '*.py', '*.txt', '*.md', '*.csv', '*.pptx', '*.png', '*.jpg', '*.jpeg')
-            excludePatterns  = @('.*', 'Thumbs.db', 'desktop.ini', '~$*')  # ~$* sind temporäre Office-Dateien
+            excludePatterns  = @('.*', 'Thumbs.db', 'desktop.ini', '~$*', 'BITTE_NAMENSKONVENTION_BEACHTEN.txt')  # ~$* sind temporäre Office-Dateien
         }
     )
 
@@ -51,6 +51,17 @@
             rename      = '{timestamp}_{name}'
         }
     )
+
+    # Wird bei einer Quelle mit 'aufgabenRoot' ausgewertet: Passt eine Datei zu
+    # keiner Regel mit Praefix/Suffix-Gruppen (siehe oben), wird sie NICHT kopiert.
+    # Stattdessen legt DocFlowEngine im selben Ordner wie die Datei eine
+    # Hinweis-Textdatei an, die zur korrekten Umbenennung und zum erneuten
+    # Hochladen auffordert.
+    namingConventionHint = @{
+        enabled  = $true
+        fileName = 'BITTE_NAMENSKONVENTION_BEACHTEN.txt'
+        message  = 'Deine Datei "{fileName}" entspricht nicht dem vorgegebenen Namensschema initialen_praefix_suffix_aufgabennummer (z. B. pke_Java_Suffix_abc). Bitte benenne die Datei entsprechend um und lade sie erneut hoch.'
+    }
 
     # Registry aller bisher erkannten Präfixe und Suffixe. DocFlowEngine ergänzt
     # diese Datei automatisch um neu erkannte Werte (siehe config/project-routes.txt).

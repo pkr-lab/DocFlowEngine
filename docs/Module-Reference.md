@@ -25,14 +25,14 @@ So liest sich `DocFlowEngine.psm1`, wenn man die Datei einmal durchscrollt – n
 - **Pfad-Helfer** `Resolve-PathOrAbsolute`, `Resolve-SourcePaths`, `Test-PathExcluded` (Zeile 48–144) – sorgen dafür, dass Pfade aus der Konfiguration (inkl. Wildcards, auch wenn der Zielpfad noch nicht existiert) zuverlässig aufgelöst und bereits sortierte Dateien beim Scannen übersprungen werden.
 - **Kompatibilitäts-Helfer** `ConvertTo-DocFlowHashtable`, `Get-DocFlowRelativePath` (Zeile 146–185) – kapseln alles, was zwischen PowerShell 7 und Windows PowerShell 5.1 unterschiedlich ist (`ConvertFrom-Json -AsHashtable`-Ersatz, `GetRelativePath`-Ersatz).
 - **`Load-Config`** (Zeile 187) – liest und validiert `docflow-config.psd1`. Hier brechen fehlerhafte Konfigurationen mit `throw` ab.
-- **`Load-State` / `Save-State`** (Zeile 222–255) – Lesen/Schreiben der `.docflow-state.json`, damit bereits kopierte Dateien nicht doppelt verarbeitet werden.
-- **`Ensure-TargetDirectories`** (Zeile 257) – legt fehlende Zielordner an, bevor irgendetwas kopiert wird.
-- **`Get-SourceFiles`** (Zeile 282) – sammelt die tatsächlichen Dateien aus einem Quellordner anhand der `includePatterns` und entfernt anschließend Treffer, die auf `excludePatterns` passen.
-- **`Get-TargetFileName`** (Zeile 318) – die eigentliche Umbenennungslogik: testet die `namingConventions`-Regeln und bildet den neuen Dateinamen.
-- **Routing-Helfer** `Get-FileCategory`, `Get-FileProject`, `Get-FilePraefixSuffix` & zugehörige `Resolve-*`/Registry-Funktionen (Zeile 368–566) – ermitteln, in welches Zielverzeichnis eine Datei einsortiert wird, wenn `categoryRoutes` bzw. `aufgabenRoot` konfiguriert sind.
-- **`Copy-NewFiles`** (Zeile 568) – die zentrale „Arbeitsfunktion“: bündelt alle obigen Bausteine pro Datei (Name bilden, Ziel bestimmen, kopieren, Zustand aktualisieren).
-- **`Invoke-DocFlowEngine`** (Zeile 684) – der Einstiegspunkt, den `DocFlowEngine.ps1` aufruft; lädt Konfiguration/Zustand, ruft `Copy-NewFiles` auf und speichert am Ende den Zustand.
-- **`Export-ModuleMember`** (Zeile 754) – letzte Zeile der Datei; macht alle Funktionen nach außen sichtbar (siehe [Exportierte Funktionen](#exportierte-funktionen)).
+- **`Load-State` / `Save-State`** (Zeile 235–268) – Lesen/Schreiben der `.docflow-state.json`, damit bereits kopierte Dateien nicht doppelt verarbeitet werden.
+- **`Ensure-TargetDirectories`** (Zeile 270) – legt fehlende Zielordner an, bevor irgendetwas kopiert wird.
+- **`Get-SourceFiles`** (Zeile 295) – sammelt die tatsächlichen Dateien aus einem Quellordner anhand der `includePatterns` und entfernt anschließend Treffer, die auf `excludePatterns` passen.
+- **`Get-TargetFileName`** (Zeile 331) – die eigentliche Umbenennungslogik: testet die `namingConventions`-Regeln und bildet den neuen Dateinamen.
+- **Routing-Helfer** `Get-FileCategory`, `Get-FileProject`, `Get-FilePraefixSuffix`, `Write-NamingConventionHint` & zugehörige `Resolve-*`/Registry-Funktionen (Zeile 381–610) – ermitteln, in welches Zielverzeichnis eine Datei einsortiert wird, wenn `categoryRoutes` bzw. `aufgabenRoot` konfiguriert sind, bzw. legen einen Hinweis an, wenn `aufgabenRoot` gesetzt ist, die Datei aber keiner Praefix/Suffix-Regel entspricht.
+- **`Copy-NewFiles`** (Zeile 612) – die zentrale „Arbeitsfunktion“: bündelt alle obigen Bausteine pro Datei (Name bilden, Ziel bestimmen, kopieren, Zustand aktualisieren).
+- **`Invoke-DocFlowEngine`** (Zeile 732) – der Einstiegspunkt, den `DocFlowEngine.ps1` aufruft; lädt Konfiguration/Zustand, ruft `Copy-NewFiles` auf und speichert am Ende den Zustand.
+- **`Export-ModuleMember`** (Zeile 802) – letzte Zeile der Datei; macht alle Funktionen nach außen sichtbar (siehe [Exportierte Funktionen](#exportierte-funktionen)).
 
 ## Externe Abhängigkeiten
 
@@ -101,6 +101,7 @@ Schritt für Schritt:
 Für jede neue Datei wird das Zielverzeichnis in dieser Reihenfolge bestimmt – die erste zutreffende Regel gewinnt:
 
 1. **`aufgabenRoot` + Präfix/Suffix** – greift, wenn `Get-FilePraefixSuffix` aus dem Dateinamen `praefix`/`suffix` extrahieren kann → Ziel: `<aufgabenRoot>/<Präfix>/<Suffix>/`.
+   - Ist `aufgabenRoot` konfiguriert, `Get-FilePraefixSuffix` liefert aber `$null` (Datei entspricht nicht dem Schema) **und** `namingConventionHint.enabled` ist `$true` (Standard): Die Datei wird **nicht** kopiert. Stattdessen legt `Write-NamingConventionHint` im Quellordner der Datei eine Hinweis-Textdatei an (falls dort noch keine existiert) und die Datei wird übersprungen (`continue`) – sie erscheint dadurch in keinem der folgenden Schritte.
 2. **`ProjectRoutes`** – greift, wenn `Get-FileProject` eine `project`-Gruppe liefert und diese in den Projekt-Routen vorkommt.
 3. **`CategoryRoutes`** – greift, wenn `Get-FileCategory` einen führenden Kategorie-Namen liefert, der zu einer konfigurierten `categoryRoutes`-Regel passt.
 4. **Fallback: `targets`** – falls keines der obigen Routings aktiv ist.
@@ -166,10 +167,13 @@ Liefert `Praefix`/`Suffix` aus den gleichnamigen Regex-Gruppen einer passenden R
 **`Get-PraefixSuffixRegistry -Path <string>`** / **`Register-PraefixSuffix -Registry <hashtable> -RegistryFilePath <string> -Praefix <string> -Suffix <string>`**
 Lesen bzw. Erweitern der Registry-Datei (`config/project-routes.txt`, Format `praefix=<Name>` / `suffix=<Name>`). `Register-PraefixSuffix` ergänzt neue Werte sowohl im In-Memory-`HashSet` als auch (außer im DryRun) in der Datei selbst.
 
+**`Write-NamingConventionHint -File <FileInfo> -HintConfig <hashtable>`**
+Legt im Ordner der übergebenen Datei (`$File.DirectoryName`) eine Hinweis-Textdatei an (`$HintConfig.fileName`), sofern `$HintConfig.enabled` `$true` ist und dort noch keine solche Datei existiert (kein erneutes Schreiben bei wiederholten Läufen). Der Inhalt wird aus `$HintConfig.message` über `Expand-Template` gebildet (Platzhalter `{fileName}`, `{originalName}`, `{extension}`). Im DryRun wird nur geloggt, nichts geschrieben. Wird von `Copy-NewFiles` aufgerufen, wenn `aufgabenRoot` konfiguriert ist, eine Datei aber zu keiner Regel mit `praefix`/`suffix`-Gruppen passt.
+
 ### Hauptverarbeitung
 
-**`Copy-NewFiles -Sources -Targets -State -Rules -DefaultNameFormat [-CategoryRoutes] [-ProjectRoutes] [-AufgabenRoot] [-PraefixSuffixRegistry] [-RegistryFilePath] [-ExcludePaths]`**
-Orchestriert pro Quelle: Pfadauflösung → Dateien einlesen → Ausschlüsse filtern → bereits verarbeitete Dateien (`State.processed`) überspringen → Zielnamen bilden → Routing-Ziel bestimmen (siehe Priorität oben) → kopieren (oder im DryRun nur loggen) → `State.processed` aktualisieren.
+**`Copy-NewFiles -Sources -Targets -State -Rules -DefaultNameFormat [-CategoryRoutes] [-ProjectRoutes] [-AufgabenRoot] [-PraefixSuffixRegistry] [-RegistryFilePath] [-ExcludePaths] [-NamingConventionHint]`**
+Orchestriert pro Quelle: Pfadauflösung → Dateien einlesen → Ausschlüsse filtern → bereits verarbeitete Dateien (`State.processed`) überspringen → Zielnamen bilden → Routing-Ziel bestimmen (siehe Priorität oben, inkl. Namenskonventions-Hinweis statt Kopieren) → kopieren (oder im DryRun nur loggen) → `State.processed` aktualisieren.
 
 **`Invoke-DocFlowEngine -ConfigPath <string> [-DryRun]`**
 Einstiegspunkt, siehe Ablauf-Diagramm oben.
