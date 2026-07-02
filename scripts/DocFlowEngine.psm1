@@ -1,3 +1,5 @@
+#Requires -Version 5.1
+
 function Write-Log {
     [CmdletBinding()]
     param(
@@ -106,6 +108,47 @@ function Test-PathExcluded {
     return $false
 }
 
+function ConvertTo-DocFlowHashtable {
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline)] $InputObject
+    )
+
+    process {
+        if ($null -eq $InputObject) {
+            return $null
+        }
+
+        if ($InputObject -is [System.Management.Automation.PSCustomObject]) {
+            $hash = [ordered]@{}
+            foreach ($property in $InputObject.PSObject.Properties) {
+                $hash[$property.Name] = ConvertTo-DocFlowHashtable -InputObject $property.Value
+            }
+            return $hash
+        }
+
+        if ($InputObject -is [System.Collections.IEnumerable] -and $InputObject -isnot [string]) {
+            return @($InputObject | ForEach-Object { ConvertTo-DocFlowHashtable -InputObject $_ })
+        }
+
+        return $InputObject
+    }
+}
+
+function Get-DocFlowRelativePath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$BasePath,
+        [Parameter(Mandatory)] [string]$FullPath
+    )
+
+    $baseUri = [Uri](Join-Path $BasePath '')
+    $fullUri = [Uri]$FullPath
+    $relativeUri = $baseUri.MakeRelativeUri($fullUri)
+    $relative = [Uri]::UnescapeDataString($relativeUri.ToString())
+    return $relative.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+}
+
 function Load-Config {
     [CmdletBinding()]
     param(
@@ -116,8 +159,7 @@ function Load-Config {
         throw "Konfigurationsdatei '$Path' wurde nicht gefunden."
     }
 
-    $yaml = Get-Content -Path $Path -Raw
-    $config = $yaml | ConvertFrom-Yaml
+    $config = Import-PowerShellDataFile -Path $Path
 
     if (-not $config.sources) {
         throw "Konfiguration muss mindestens einen Eintrag unter 'sources' enthalten."
@@ -132,11 +174,11 @@ function Load-Config {
     }
 
     if (-not $config.stateFile) {
-        $config | Add-Member -NotePropertyName stateFile -NotePropertyValue './.docflow-state.json'
+        $config.stateFile = './.docflow-state.json'
     }
 
     if (-not $config.log) {
-        $config | Add-Member -NotePropertyName log -NotePropertyValue @{ level = 'Info'; file = './docflow.log' }
+        $config.log = @{ level = 'Info'; file = './docflow.log' }
     }
 
     return $config
@@ -154,7 +196,8 @@ function Load-State {
 
     try {
         $json = Get-Content -Path $StatePath -Raw
-        return $json | ConvertFrom-Json -AsHashtable
+        $parsed = $json | ConvertFrom-Json
+        return ConvertTo-DocFlowHashtable -InputObject $parsed
     } catch {
         Write-Log -Level Warning -Message "Zustandsdatei '$StatePath' konnte nicht gelesen werden. Es wird eine neue Datei erstellt."
         return [ordered]@{ processed = @{} }
@@ -223,6 +266,14 @@ function Get-SourceFiles {
 
         foreach ($item in $items) {
             $files[$item.FullName] = $item
+        }
+    }
+
+    foreach ($excludePattern in $Source.excludePatterns) {
+        foreach ($key in @($files.Keys)) {
+            if ($files[$key].Name -like $excludePattern) {
+                $files.Remove($key)
+            }
         }
     }
 
@@ -559,7 +610,7 @@ function Copy-NewFiles {
                 foreach ($target in $effectiveTargets) {
                     $destinationDirectory = $target.path
                     if ($target.preserveSubfolders) {
-                        $relative = [System.IO.Path]::GetRelativePath($resolvedSourcePath, $item.DirectoryName)
+                        $relative = Get-DocFlowRelativePath -BasePath $resolvedSourcePath -FullPath $item.DirectoryName
                         if ($relative -and $relative -ne '.') {
                             $destinationDirectory = Join-Path $destinationDirectory $relative
                         }
@@ -598,7 +649,7 @@ function Copy-NewFiles {
 function Invoke-DocFlowEngine {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)] [string]$ConfigPath = '.\config\docflow-config.yml',
+        [string]$ConfigPath = '.\config\docflow-config.psd1',
         [switch]$DryRun
     )
 
@@ -606,7 +657,11 @@ function Invoke-DocFlowEngine {
     $Script:DryRun = $DryRun
 
     $config = Load-Config -Path $ConfigPath
-    $logLevelName = ($config.log.level ?? 'Info').ToString()
+    $logLevelValue = $config.log.level
+    if ($null -eq $logLevelValue) {
+        $logLevelValue = 'Info'
+    }
+    $logLevelName = $logLevelValue.ToString()
     if (-not $Script:LogLevels.ContainsKey($logLevelName)) {
         $logLevelName = 'Info'
     }
@@ -661,4 +716,4 @@ function Invoke-DocFlowEngine {
     Write-Log -Level Info -Message "Verarbeitung abgeschlossen."
 }
 
-Export-ModuleMember -Function Invoke-DocFlowEngine, Get-TargetFileName, Load-Config, Load-State, Save-State, Get-SourceFiles, Ensure-TargetDirectories, Resolve-PathOrAbsolute, Resolve-SourcePaths, Test-PathExcluded, Expand-Template, Write-Log, Copy-NewFiles, Get-FileCategory, Resolve-CategoryTarget, Get-FileProject, Get-ProjectRoutes, Resolve-ProjectTarget, Get-FilePraefixSuffix, Get-PraefixSuffixRegistry, Register-PraefixSuffix
+Export-ModuleMember -Function Invoke-DocFlowEngine, Get-TargetFileName, Load-Config, Load-State, Save-State, Get-SourceFiles, Ensure-TargetDirectories, Resolve-PathOrAbsolute, Resolve-SourcePaths, Test-PathExcluded, Expand-Template, Write-Log, Copy-NewFiles, Get-FileCategory, Resolve-CategoryTarget, Get-FileProject, Get-ProjectRoutes, Resolve-ProjectTarget, Get-FilePraefixSuffix, Get-PraefixSuffixRegistry, Register-PraefixSuffix, ConvertTo-DocFlowHashtable, Get-DocFlowRelativePath
