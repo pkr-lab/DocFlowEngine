@@ -77,6 +77,32 @@ Zusätzlich wurde `#Requires -Version 5.1` an den Anfang von `DocFlowEngine.ps1`
 (2.0–4.0) gestartet wird, bricht es sofort mit einer klaren Meldung ab, statt mit einem kryptischen
 Parser-Fehler mitten im Code.
 
+### 3.4 Nachtrag: Fehler aus dem ersten echten Testlauf (`Resolve-PathOrAbsolute`)
+
+Der erste `-DryRun`-Lauf auf einem echten Windows-PowerShell-5.1-Rechner deckte einen weiteren,
+statisch nicht erkennbaren Fehler auf: `targets[].path` und `aufgabenRoot` enthalten – genau wie
+`sources[].path` – geräteabhängige Wildcards (`C:/Users/p0*/OneDrive - D*/...`), weil Benutzername und
+OneDrive-Mandant je Gerät variieren. `Resolve-PathOrAbsolute` versuchte diese zunächst über
+`Resolve-Path` aufzulösen; das schlägt aber fehl, solange der letzte Unterordner (z. B. `docs/archive`)
+noch nicht existiert, weil er ja erst per `createIfMissing` angelegt werden soll. Als Fallback rief der
+Code `[System.IO.Path]::GetFullPath(...)` auf – und diese Methode wirft unter Windows PowerShell 5.1
+(.NET Framework) eine `ArgumentException` ("Illegales Zeichen im Pfad"), sobald der Pfad noch `*`/`?`
+enthält (siehe [Quelle 11](#quellen)). Unter PowerShell 7 (.NET Core) ist dieselbe Methode toleranter,
+weshalb der Fehler in der reinen Quelltextprüfung (Abschnitt 4) nicht auffiel.
+
+`Resolve-PathOrAbsolute` wurde daher erweitert: Bei Wildcard-Pfaden, die als Ganzes nicht existieren,
+werden vom Ende her Segmente abgeschnitten, bis ein existierendes (ggf. selbst wildcardhaltiges)
+Elternverzeichnis über `Resolve-Path` gefunden wird; die abgeschnittenen Segmente werden anschließend
+literal wieder angehängt. Details siehe [`docs/Module-Reference.md`](Module-Reference.md).
+
+Die im selben Lauf aufgetretene Warnung `Quellverzeichnis '...FI*/Austauschordner/' existiert nicht oder
+wurde nicht gefunden` ist davon unabhängig – `Resolve-SourcePaths` funktionierte korrekt und meldet
+zurecht, dass für dieses Wildcard-Muster kein passender, tatsächlich existierender Ordner gefunden
+wurde. Das ist kein Code-Bug, sondern deutet darauf hin, dass der konfigurierte Pfad/Musterteil
+(`FI*/Austauschordner`) auf diesem Gerät so nicht existiert – bitte den tatsächlichen Ordnernamen unter
+`C:\Users\p0*\OneDrive - ...\IT-Ausbildung Jahrgangsordner\` gegenprüfen und `includePatterns`/den Pfad
+in `docflow-config.psd1` bei Bedarf anpassen.
+
 ## 4. Ergebnis der Abhängigkeits- und Codeprüfung
 
 | Prüfpunkt | Ergebnis |
@@ -86,7 +112,7 @@ Parser-Fehler mitten im Code.
 | Admin-Rechte für Ausführung nötig? | Nein (siehe [Quellen 1, 2, 9](#quellen)). |
 | Admin-Rechte für optionale Modul-Installation (z. B. Pester für Tests) nötig? | Nein, sofern `-Scope CurrentUser` verwendet wird (siehe [Quelle 10](#quellen)). |
 | Klammern-/Strukturbalance der `.psm1`- und `.psd1`-Dateien | Geprüft (Python-Skript, Klammern-/Parenthesen-Zählung) – ausgeglichen. |
-| Tatsächlicher Parser-/Laufzeittest mit `pwsh`/`powershell.exe` | **Nicht möglich** – auf diesem (macOS-)Entwicklungsrechner ist keine PowerShell-Laufzeit installiert. Die Prüfung erfolgte durch Quelltextanalyse und Abgleich mit der offiziellen Cmdlet-/API-Dokumentation, nicht durch tatsächliche Ausführung. |
+| Tatsächlicher Parser-/Laufzeittest mit `pwsh`/`powershell.exe` | Erste Runde nur per Quelltextanalyse (kein PowerShell auf dem Entwicklungsrechner verfügbar). Ein späterer echter `-DryRun`-Lauf auf Windows PowerShell 5.1 deckte den in 3.4 beschriebenen, statisch nicht erkennbaren `Resolve-PathOrAbsolute`-Fehler auf – seitdem behoben, aber noch nicht erneut auf echter Hardware verifiziert. |
 
 ### Bekannte, bewusst nicht behobene Punkte
 
@@ -105,9 +131,11 @@ Parser-Fehler mitten im Code.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\DocFlowEngine.ps1 -DryRun
 ```
 
-Da hier keine PowerShell-Laufzeit zur Verfügung stand, ist das der entscheidende verbleibende Schritt:
-ein echter Dry-Run auf einem Windows-Rechner mit Windows PowerShell 5.1, bevor produktiv (ohne `-DryRun`)
-gearbeitet wird.
+Der `Resolve-PathOrAbsolute`-Fix aus 3.4 wurde bisher nur per Quelltextanalyse geprüft, nicht auf einer
+echten Windows-PowerShell-5.1-Installation. Bitte den Dry-Run erneut ausführen und prüfen, ob (a) für
+`targets[].path` und `aufgabenRoot` jetzt keine `GetFullPath`-Exceptions mehr auftreten und (b) die
+Warnung zum Quellordner (`FI*/Austauschordner`) verschwindet, sobald Pfad/Muster in
+`docflow-config.psd1` an die tatsächliche Ordnerstruktur angepasst ist.
 
 ## Quellen
 
@@ -124,3 +152,4 @@ Admin-Rechte nötig":
 8. [Uri.MakeRelativeUri(Uri) – Microsoft Learn (.NET-API-Referenz)](https://learn.microsoft.com/en-us/dotnet/api/system.uri.makerelativeuri?view=net-10.0) – die "Applies to"-Liste führt durchgängig `netframework-2.0` bis `netframework-4.8.1` auf; das ist die Grundlage für den PS-5.1-kompatiblen Ersatz `Get-DocFlowRelativePath`.
 9. [about_Execution_Policies – Microsoft Learn, PS-5.1-Referenz](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies?view=powershell-5.1) – beschreibt den `Process`-Scope von `-ExecutionPolicy Bypass`: *"If you set the execution policy for the **Process** scope, it's not saved in the registry."* Admin-Rechte ("Run as administrator") werden laut Dokumentation nur benötigt, um die Policy dauerhaft im `LocalMachine`-Scope zu ändern – nicht für den in `DocFlowEngine.ps1`/README verwendeten `-ExecutionPolicy Bypass`-Aufruf pro Prozess.
 10. [Install-Module (PowerShellGet) – Microsoft Learn](https://learn.microsoft.com/en-us/powershell/module/powershellget/install-module?view=powershellget-2.x) – belegt, dass `-Scope CurrentUser` Module ins Benutzerprofil installiert und keine Elevation erfordert (relevant nur noch für die optionale Pester-Installation für Tests, nicht mehr für den produktiven Betrieb von DocFlowEngine selbst).
+11. [Path.GetFullPath Method – Microsoft Learn (.NET-API-Referenz)](https://learn.microsoft.com/en-us/dotnet/api/system.io.path.getfullpath?view=net-8.0) – dokumentiert die `ArgumentException`, wenn der Pfad "one or more of the invalid characters defined in `GetInvalidPathChars()`" enthält; empirisch bestätigt durch den tatsächlichen Fehler ("Illegales Zeichen im Pfad") beim ersten `-DryRun`-Lauf auf Windows PowerShell 5.1, sobald der Pfad noch ein `*` enthielt – unter PowerShell 7/.NET Core trat dasselbe nicht auf. Grundlage für den in Abschnitt 3.4 beschriebenen Fix.

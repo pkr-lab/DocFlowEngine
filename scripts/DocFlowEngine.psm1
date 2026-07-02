@@ -51,26 +51,61 @@ function Resolve-PathOrAbsolute {
         [Parameter(Mandatory)] [string]$PathValue
     )
 
-    if (-not [string]::IsNullOrWhiteSpace($PathValue)) {
-        $resolved = $null
-        try {
-            $resolved = Resolve-Path -Path $PathValue -ErrorAction Stop
-        } catch {
-            $resolved = $null
-        }
-
-        if ($resolved) {
-            return $resolved.ProviderPath
-        }
-
-        if ([System.IO.Path]::IsPathRooted($PathValue)) {
-            return [System.IO.Path]::GetFullPath($PathValue)
-        }
-
-        return [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $PathValue))
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        return $null
     }
 
-    return $null
+    $resolved = $null
+    try {
+        $resolved = Resolve-Path -Path $PathValue -ErrorAction Stop
+    } catch {
+        $resolved = $null
+    }
+
+    if ($resolved) {
+        return $resolved.ProviderPath
+    }
+
+    if ($PathValue -match '[*?]') {
+        # Pfad enthält Wildcards (z. B. geräteabhängige OneDrive-Ordnernamen) und
+        # existiert als Ganzes noch nicht (z. B. weil ein Zielordner erst von
+        # DocFlowEngine angelegt wird). Wir schneiden vom Ende her Segmente ab,
+        # bis ein existierendes (ggf. ebenfalls wildcardhaltiges) Elternverzeichnis
+        # gefunden und via Resolve-Path aufgelöst werden kann, und hängen die
+        # fehlenden Segmente danach wieder literal an.
+        $trailingSegments = New-Object System.Collections.Generic.List[string]
+        $current = $PathValue.TrimEnd('\', '/')
+
+        while ($true) {
+            $parent = Split-Path -Path $current -Parent
+            $leaf = Split-Path -Path $current -Leaf
+            if (-not $parent -or $parent -eq $current) {
+                break
+            }
+
+            $trailingSegments.Insert(0, $leaf)
+            $current = $parent
+
+            try {
+                $resolvedParent = Resolve-Path -Path $current -ErrorAction Stop
+                $result = $resolvedParent.ProviderPath
+                foreach ($segment in $trailingSegments) {
+                    $result = Join-Path $result $segment
+                }
+                return $result
+            } catch {
+                continue
+            }
+        }
+
+        throw "Pfad '$PathValue' enthält Wildcards, aber es konnte kein existierendes übergeordnetes Verzeichnis dafür gefunden werden."
+    }
+
+    if ([System.IO.Path]::IsPathRooted($PathValue)) {
+        return [System.IO.Path]::GetFullPath($PathValue)
+    }
+
+    return [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $PathValue))
 }
 
 function Resolve-SourcePaths {
