@@ -155,7 +155,11 @@ function ConvertTo-DocFlowHashtable {
         }
 
         if ($InputObject -is [System.Management.Automation.PSCustomObject]) {
-            $hash = [ordered]@{}
+            # Bewusst @{} statt [ordered]@{}: Eine OrderedDictionary hat kein
+            # ContainsKey (nur Contains), aber Copy-NewFiles ruft auf $State.processed
+            # gezielt .ContainsKey() auf. Eine normale Hashtable verhält sich hier
+            # wie das Original von ConvertFrom-Json -AsHashtable.
+            $hash = @{}
             foreach ($property in $InputObject.PSObject.Properties) {
                 $hash[$property.Name] = ConvertTo-DocFlowHashtable -InputObject $property.Value
             }
@@ -239,7 +243,7 @@ function Load-State {
     )
 
     if (-not (Test-Path $StatePath)) {
-        return [ordered]@{ processed = @{} }
+        return @{ processed = @{} }
     }
 
     try {
@@ -248,7 +252,7 @@ function Load-State {
         return ConvertTo-DocFlowHashtable -InputObject $parsed
     } catch {
         Write-Log -Level Warning -Message "Zustandsdatei '$StatePath' konnte nicht gelesen werden. Es wird eine neue Datei erstellt."
-        return [ordered]@{ processed = @{} }
+        return @{ processed = @{} }
     }
 }
 
