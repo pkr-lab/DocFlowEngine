@@ -11,7 +11,7 @@
 
     sources = @(
         @{
-            path             = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung Jahrgangsordner/FI*/Austauschordner/'
+            path             = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung - Jahrgangsordner/FI*/Austauschordner/'
             recursive        = $true
             includePatterns  = @('*.pdf', '*.docx', '*.doc', '*.xlsx', '*.java', '*.zip', '*.py', '*.txt', '*.md', '*.csv', '*.pptx', '*.png', '*.jpg', '*.jpeg')
             excludePatterns  = @('.*', 'Thumbs.db', 'desktop.ini', '~$*')  # ~$* sind temporäre Office-Dateien
@@ -20,7 +20,7 @@
 
     targets = @(
         @{
-            path               = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung Jahrgangsordner/SchuelerMaterial/docs/archive'
+            path               = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung - Jahrgangsordner/SchuelerMaterial/docs/archive'
             createIfMissing    = $true
             preserveSubfolders = $false
         }
@@ -29,7 +29,7 @@
     # Wurzelverzeichnis für die Aufgaben-Ablage. Dateien, deren Name dem
     # Präfix/Suffix-Schema entspricht, werden nach
     # <aufgabenRoot>/<Präfix>/<Suffix>/ kopiert statt in die obigen 'targets'.
-    aufgabenRoot = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung Jahrgangsordner/SchuelerMaterial/docs/Aufgaben'
+    aufgabenRoot = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung - Jahrgangsordner/SchuelerMaterial/docs/Aufgaben'
 
     namingConventions = @(
         @{
