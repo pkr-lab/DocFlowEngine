@@ -22,17 +22,17 @@ So liest sich `DocFlowEngine.psm1`, wenn man die Datei einmal durchscrollt – n
 - **`#Requires -Version 5.1`** (Zeile 1) – erzwingt einen klaren Fehler beim Start, falls eine ältere PowerShell-Version verwendet wird, statt eines kryptischen Parser-Fehlers weiter unten.
 - **`Write-Log`** (Zeile 3) – weil praktisch jede andere Funktion sie zur Diagnose aufruft. Schreibt Konsolen- und optional Logdatei-Ausgaben.
 - **`Expand-Template`** (Zeile 33) – kleiner Platzhalter-Ersetzer (`{key}` → Wert), den die Umbenennungslogik weiter unten braucht.
-- **Pfad-Helfer** `Resolve-PathOrAbsolute`, `Resolve-SourcePaths`, `Test-PathExcluded` (Zeile 48–109) – sorgen dafür, dass Pfade aus der Konfiguration (inkl. Wildcards) zuverlässig aufgelöst und bereits sortierte Dateien beim Scannen übersprungen werden.
-- **Kompatibilitäts-Helfer** `ConvertTo-DocFlowHashtable`, `Get-DocFlowRelativePath` (Zeile 111–150) – kapseln alles, was zwischen PowerShell 7 und Windows PowerShell 5.1 unterschiedlich ist (`ConvertFrom-Json -AsHashtable`-Ersatz, `GetRelativePath`-Ersatz).
-- **`Load-Config`** (Zeile 152) – liest und validiert `docflow-config.psd1`. Hier brechen fehlerhafte Konfigurationen mit `throw` ab.
-- **`Load-State` / `Save-State`** (Zeile 187–220) – Lesen/Schreiben der `.docflow-state.json`, damit bereits kopierte Dateien nicht doppelt verarbeitet werden.
-- **`Ensure-TargetDirectories`** (Zeile 222) – legt fehlende Zielordner an, bevor irgendetwas kopiert wird.
-- **`Get-SourceFiles`** (Zeile 247) – sammelt die tatsächlichen Dateien aus einem Quellordner anhand der `includePatterns` und entfernt anschließend Treffer, die auf `excludePatterns` passen.
-- **`Get-TargetFileName`** (Zeile 283) – die eigentliche Umbenennungslogik: testet die `namingConventions`-Regeln und bildet den neuen Dateinamen.
-- **Routing-Helfer** `Get-FileCategory`, `Get-FileProject`, `Get-FilePraefixSuffix` & zugehörige `Resolve-*`/Registry-Funktionen (Zeile 333–531) – ermitteln, in welches Zielverzeichnis eine Datei einsortiert wird, wenn `categoryRoutes` bzw. `aufgabenRoot` konfiguriert sind.
-- **`Copy-NewFiles`** (Zeile 533) – die zentrale „Arbeitsfunktion“: bündelt alle obigen Bausteine pro Datei (Name bilden, Ziel bestimmen, kopieren, Zustand aktualisieren).
-- **`Invoke-DocFlowEngine`** (Zeile 649) – der Einstiegspunkt, den `DocFlowEngine.ps1` aufruft; lädt Konfiguration/Zustand, ruft `Copy-NewFiles` auf und speichert am Ende den Zustand.
-- **`Export-ModuleMember`** (Zeile 719) – letzte Zeile der Datei; macht alle Funktionen nach außen sichtbar (siehe [Exportierte Funktionen](#exportierte-funktionen)).
+- **Pfad-Helfer** `Resolve-PathOrAbsolute`, `Resolve-SourcePaths`, `Test-PathExcluded` (Zeile 48–144) – sorgen dafür, dass Pfade aus der Konfiguration (inkl. Wildcards, auch wenn der Zielpfad noch nicht existiert) zuverlässig aufgelöst und bereits sortierte Dateien beim Scannen übersprungen werden.
+- **Kompatibilitäts-Helfer** `ConvertTo-DocFlowHashtable`, `Get-DocFlowRelativePath` (Zeile 146–185) – kapseln alles, was zwischen PowerShell 7 und Windows PowerShell 5.1 unterschiedlich ist (`ConvertFrom-Json -AsHashtable`-Ersatz, `GetRelativePath`-Ersatz).
+- **`Load-Config`** (Zeile 187) – liest und validiert `docflow-config.psd1`. Hier brechen fehlerhafte Konfigurationen mit `throw` ab.
+- **`Load-State` / `Save-State`** (Zeile 222–255) – Lesen/Schreiben der `.docflow-state.json`, damit bereits kopierte Dateien nicht doppelt verarbeitet werden.
+- **`Ensure-TargetDirectories`** (Zeile 257) – legt fehlende Zielordner an, bevor irgendetwas kopiert wird.
+- **`Get-SourceFiles`** (Zeile 282) – sammelt die tatsächlichen Dateien aus einem Quellordner anhand der `includePatterns` und entfernt anschließend Treffer, die auf `excludePatterns` passen.
+- **`Get-TargetFileName`** (Zeile 318) – die eigentliche Umbenennungslogik: testet die `namingConventions`-Regeln und bildet den neuen Dateinamen.
+- **Routing-Helfer** `Get-FileCategory`, `Get-FileProject`, `Get-FilePraefixSuffix` & zugehörige `Resolve-*`/Registry-Funktionen (Zeile 368–566) – ermitteln, in welches Zielverzeichnis eine Datei einsortiert wird, wenn `categoryRoutes` bzw. `aufgabenRoot` konfiguriert sind.
+- **`Copy-NewFiles`** (Zeile 568) – die zentrale „Arbeitsfunktion“: bündelt alle obigen Bausteine pro Datei (Name bilden, Ziel bestimmen, kopieren, Zustand aktualisieren).
+- **`Invoke-DocFlowEngine`** (Zeile 684) – der Einstiegspunkt, den `DocFlowEngine.ps1` aufruft; lädt Konfiguration/Zustand, ruft `Copy-NewFiles` auf und speichert am Ende den Zustand.
+- **`Export-ModuleMember`** (Zeile 754) – letzte Zeile der Datei; macht alle Funktionen nach außen sichtbar (siehe [Exportierte Funktionen](#exportierte-funktionen)).
 
 ## Externe Abhängigkeiten
 
@@ -120,7 +120,9 @@ Ersetzt Platzhalter der Form `{key}` im Template durch Werte aus `Context`. Wird
 ### Pfad-Hilfsfunktionen
 
 **`Resolve-PathOrAbsolute -PathValue <string>`**
-Wandelt einen relativen/absoluten Pfad in einen absoluten Pfad um. Existiert der Pfad bereits, wird `Resolve-Path` genutzt; sonst wird der Pfad rein lexikalisch aufgelöst (z. B. für Zielordner, die erst noch angelegt werden). Wird u. a. von `Ensure-TargetDirectories`, `Invoke-DocFlowEngine` und `Copy-NewFiles` (Routing-Ziele) verwendet.
+Wandelt einen relativen/absoluten Pfad in einen absoluten Pfad um. Existiert der Pfad bereits, wird `Resolve-Path` genutzt (das löst auch Wildcards auf). Existiert der Pfad noch nicht, aber enthält Wildcards (z. B. geräteabhängige OneDrive-Ordnernamen in `targets`/`aufgabenRoot`, deren letzter Unterordner erst von `Ensure-TargetDirectories` angelegt wird), werden vom Ende her Segmente abgeschnitten, bis ein existierendes – ggf. selbst wildcardhaltiges – Elternverzeichnis via `Resolve-Path` gefunden wird; die abgeschnittenen Segmente werden danach literal wieder angehängt. Ohne Wildcards wird der Pfad rein lexikalisch aufgelöst (`[System.IO.Path]::GetFullPath`). Wird u. a. von `Ensure-TargetDirectories`, `Invoke-DocFlowEngine` und `Copy-NewFiles` (Routing-Ziele) verwendet.
+
+> **Hintergrund:** `[System.IO.Path]::GetFullPath` wirft unter Windows PowerShell 5.1 (.NET Framework) eine Exception, wenn der Pfad noch `*`/`?` enthält – anders als unter PowerShell 7 (.NET Core), das hier toleranter ist. Die Wildcard-Auflösung über das nächste existierende Elternverzeichnis umgeht das, statt sich auf `GetFullPath` mit Wildcards zu verlassen.
 
 **`Resolve-SourcePaths -PathValue <string>`**
 Löst einen Quellpfad auf, der **Wildcards** enthalten kann (z. B. `C:/Users/p0*/OneDrive - D*/SharePoint`), und liefert alle Treffer als Array zurück. Anders als `Resolve-PathOrAbsolute` gibt diese Funktion bei keinem Treffer ein leeres Array zurück (kein Fehler), damit `Copy-NewFiles` die Quelle einfach überspringen kann.
