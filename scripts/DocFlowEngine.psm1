@@ -1,746 +1,25 @@
 #Requires -Version 5.1
 
-function Write-Log {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [ValidateSet('Trace','Debug','Info','Warning','Error')] [string]$Level,
-        [Parameter(Mandatory)] [string]$Message
-    )
+# DocFlowEngine ist in fokussierte Teilmodule aufgeteilt (siehe
+# ERWEITERUNGSKONZEPT.md, Abschnitt 3), um die frühere ~800-Zeilen-Einzeldatei
+# zu vermeiden. Diese Root-Moduldatei bindet sie per Dot-Sourcing ein und
+# stellt den öffentlichen Einstiegspunkt Invoke-DocFlowEngine bereit.
+$Script:DocFlowModuleParts = @(
+    'Common.ps1'
+    'Config.ps1'
+    'State.ps1'
+    'Lock.ps1'
+    'Naming.ps1'
+    'CopyForward.ps1'
+    'CopyBack.ps1'
+)
 
-    if (-not $Script:LogLevels) {
-        $Script:LogLevels = @{ TRACE = 0; DEBUG = 1; INFO = 2; WARNING = 3; ERROR = 4 }
+foreach ($part in $Script:DocFlowModuleParts) {
+    $partPath = Join-Path (Join-Path $PSScriptRoot 'DocFlowEngine') $part
+    if (-not (Test-Path $partPath)) {
+        throw "Teilmodul '$partPath' wurde nicht gefunden."
     }
-
-    if ($null -eq $Script:CurrentLogLevel) {
-        $Script:CurrentLogLevel = $Script:LogLevels['INFO']
-    }
-
-    $level = $Level.ToUpperInvariant()
-    $timestamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
-    if (-not $Script:LogLevels.ContainsKey($level)) {
-        $level = 'INFO'
-    }
-
-    if ($Script:CurrentLogLevel -le $Script:LogLevels[$level]) {
-        $output = "[$timestamp] [$level] $Message"
-        Write-Host $output
-        if ($Script:LogFilePath) {
-            Add-Content -Path $Script:LogFilePath -Value $output
-        }
-    }
-}
-
-function Expand-Template {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$Template,
-        [Parameter(Mandatory)] [hashtable]$Context
-    )
-
-    $result = $Template
-    foreach ($key in $Context.Keys) {
-        $result = $result.Replace("{$key}", [string]$Context[$key])
-    }
-
-    return $result
-}
-
-function Resolve-PathOrAbsolute {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$PathValue
-    )
-
-    if ([string]::IsNullOrWhiteSpace($PathValue)) {
-        return $null
-    }
-
-    $resolved = $null
-    try {
-        $resolved = Resolve-Path -Path $PathValue -ErrorAction Stop
-    } catch {
-        $resolved = $null
-    }
-
-    if ($resolved) {
-        return $resolved.ProviderPath
-    }
-
-    if ($PathValue -match '[*?]') {
-        # Pfad enthält Wildcards (z. B. geräteabhängige OneDrive-Ordnernamen) und
-        # existiert als Ganzes noch nicht (z. B. weil ein Zielordner erst von
-        # DocFlowEngine angelegt wird). Wir schneiden vom Ende her Segmente ab,
-        # bis ein existierendes (ggf. ebenfalls wildcardhaltiges) Elternverzeichnis
-        # gefunden und via Resolve-Path aufgelöst werden kann, und hängen die
-        # fehlenden Segmente danach wieder literal an.
-        $trailingSegments = New-Object System.Collections.Generic.List[string]
-        $current = $PathValue.TrimEnd('\', '/')
-
-        while ($true) {
-            $parent = Split-Path -Path $current -Parent
-            $leaf = Split-Path -Path $current -Leaf
-            if (-not $parent -or $parent -eq $current) {
-                break
-            }
-
-            $trailingSegments.Insert(0, $leaf)
-            $current = $parent
-
-            try {
-                $resolvedParent = Resolve-Path -Path $current -ErrorAction Stop
-                $result = $resolvedParent.ProviderPath
-                foreach ($segment in $trailingSegments) {
-                    $result = Join-Path $result $segment
-                }
-                return $result
-            } catch {
-                continue
-            }
-        }
-
-        throw "Pfad '$PathValue' enthält Wildcards, aber es konnte kein existierendes übergeordnetes Verzeichnis dafür gefunden werden."
-    }
-
-    if ([System.IO.Path]::IsPathRooted($PathValue)) {
-        return [System.IO.Path]::GetFullPath($PathValue)
-    }
-
-    return [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $PathValue))
-}
-
-function Resolve-SourcePaths {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$PathValue
-    )
-
-    try {
-        $items = Resolve-Path -Path $PathValue -ErrorAction Stop
-        return @($items | ForEach-Object { $_.ProviderPath })
-    } catch {
-        return @()
-    }
-}
-
-function Test-PathExcluded {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$FullName,
-        [array]$ExcludePaths = @()
-    )
-
-    foreach ($exclude in $ExcludePaths) {
-        if (-not $exclude) {
-            continue
-        }
-
-        $normalizedExclude = $exclude.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
-        if ($FullName.StartsWith($normalizedExclude, [System.StringComparison]::OrdinalIgnoreCase)) {
-            return $true
-        }
-    }
-
-    return $false
-}
-
-function ConvertTo-DocFlowHashtable {
-    [CmdletBinding()]
-    param(
-        [Parameter(ValueFromPipeline)] $InputObject
-    )
-
-    process {
-        if ($null -eq $InputObject) {
-            return $null
-        }
-
-        if ($InputObject -is [System.Management.Automation.PSCustomObject]) {
-            # Bewusst @{} statt [ordered]@{}: Eine OrderedDictionary hat kein
-            # ContainsKey (nur Contains), aber Copy-NewFiles ruft auf $State.processed
-            # gezielt .ContainsKey() auf. Eine normale Hashtable verhält sich hier
-            # wie das Original von ConvertFrom-Json -AsHashtable.
-            $hash = @{}
-            foreach ($property in $InputObject.PSObject.Properties) {
-                $hash[$property.Name] = ConvertTo-DocFlowHashtable -InputObject $property.Value
-            }
-            return $hash
-        }
-
-        if ($InputObject -is [System.Collections.IEnumerable] -and $InputObject -isnot [string]) {
-            return @($InputObject | ForEach-Object { ConvertTo-DocFlowHashtable -InputObject $_ })
-        }
-
-        return $InputObject
-    }
-}
-
-function Get-DocFlowRelativePath {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$BasePath,
-        [Parameter(Mandatory)] [string]$FullPath
-    )
-
-    $baseUri = [Uri](Join-Path $BasePath '')
-    $fullUri = [Uri]$FullPath
-    $relativeUri = $baseUri.MakeRelativeUri($fullUri)
-    $relative = [Uri]::UnescapeDataString($relativeUri.ToString())
-    return $relative.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
-}
-
-function Load-Config {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$Path
-    )
-
-    if (-not (Test-Path $Path)) {
-        throw "Konfigurationsdatei '$Path' wurde nicht gefunden."
-    }
-
-    $config = Import-PowerShellDataFile -Path $Path
-
-    if (-not $config.sources) {
-        throw "Konfiguration muss mindestens einen Eintrag unter 'sources' enthalten."
-    }
-
-    if (-not $config.targets) {
-        throw "Konfiguration muss mindestens einen Eintrag unter 'targets' enthalten."
-    }
-
-    if (-not $config.namingConventions) {
-        throw "Konfiguration muss mindestens eine Regel unter 'namingConventions' enthalten."
-    }
-
-    if (-not $config.stateFile) {
-        $config.stateFile = './.docflow-state.json'
-    }
-
-    if (-not $config.log) {
-        $config.log = @{ level = 'Info'; file = './docflow.log' }
-    }
-
-    if (-not $config.namingConventionHint) {
-        $config.namingConventionHint = @{}
-    }
-    if (-not $config.namingConventionHint.ContainsKey('enabled')) {
-        $config.namingConventionHint.enabled = $true
-    }
-    if (-not $config.namingConventionHint.fileName) {
-        $config.namingConventionHint.fileName = 'BITTE_NAMENSKONVENTION_BEACHTEN.txt'
-    }
-    if (-not $config.namingConventionHint.message) {
-        $config.namingConventionHint.message = 'Deine Datei "{fileName}" entspricht nicht dem vorgegebenen Namensschema (initialen_praefix_suffix_aufgabennummer). Bitte benenne die Datei entsprechend um und lade sie erneut hoch.'
-    }
-
-    return $config
-}
-
-function Load-State {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$StatePath
-    )
-
-    if (-not (Test-Path $StatePath)) {
-        return @{ processed = @{} }
-    }
-
-    try {
-        $json = Get-Content -Path $StatePath -Raw
-        $parsed = $json | ConvertFrom-Json
-        return ConvertTo-DocFlowHashtable -InputObject $parsed
-    } catch {
-        Write-Log -Level Warning -Message "Zustandsdatei '$StatePath' konnte nicht gelesen werden. Es wird eine neue Datei erstellt."
-        return @{ processed = @{} }
-    }
-}
-
-function Save-State {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$StatePath,
-        [Parameter(Mandatory)] [hashtable]$State
-    )
-
-    $directory = Split-Path -Path $StatePath -Parent
-    if ($directory -and -not (Test-Path $directory)) {
-        New-Item -ItemType Directory -Path $directory -Force | Out-Null
-    }
-
-    $State | ConvertTo-Json -Depth 5 | Set-Content -Path $StatePath -Encoding UTF8
-}
-
-function Ensure-TargetDirectories {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [array]$Targets
-    )
-
-    foreach ($target in $Targets) {
-        $targetPath = Resolve-PathOrAbsolute -PathValue $target.path
-        if (-not (Test-Path $targetPath)) {
-            if ($target.createIfMissing -eq $false) {
-                throw "Zielverzeichnis '$($target.path)' existiert nicht und createIfMissing ist false."
-            }
-
-            if ($Script:DryRun) {
-                Write-Log -Level Info -Message "[DryRun] Verzeichnis würde erstellt: $targetPath"
-            } else {
-                Write-Log -Level Info -Message "Erstelle Zielverzeichnis: $targetPath"
-                New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
-            }
-        }
-
-        $target.path = $targetPath
-    }
-}
-
-function Get-SourceFiles {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] $Source,
-        [Parameter(Mandatory)] [string]$ResolvedPath
-    )
-
-    if (-not (Test-Path $ResolvedPath)) {
-        Write-Log -Level Warning -Message "Quellverzeichnis '$ResolvedPath' existiert nicht. Überspringe."
-        return @()
-    }
-
-    $files = [ordered]@{}
-    foreach ($pattern in $Source.includePatterns) {
-        if ($Source.recursive) {
-            $items = Get-ChildItem -Path $ResolvedPath -Filter $pattern -File -Recurse -ErrorAction SilentlyContinue
-        } else {
-            $items = Get-ChildItem -Path $ResolvedPath -Filter $pattern -File -ErrorAction SilentlyContinue
-        }
-
-        foreach ($item in $items) {
-            $files[$item.FullName] = $item
-        }
-    }
-
-    foreach ($excludePattern in $Source.excludePatterns) {
-        foreach ($key in @($files.Keys)) {
-            if ($files[$key].Name -like $excludePattern) {
-                $files.Remove($key)
-            }
-        }
-    }
-
-    return $files.Values
-}
-
-function Get-TargetFileName {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [System.IO.FileInfo]$File,
-        [Parameter(Mandatory)] [array]$Rules,
-        [Parameter(Mandatory)] [string]$DefaultFormat
-    )
-
-    $originalName = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
-    $extension = [System.IO.Path]::GetExtension($File.Name).TrimStart('.')
-    $context = [ordered]@{
-        originalName = $originalName
-        extension = $extension
-        timestamp = (Get-Date).ToString('yyyyMMddHHmmss')
-        date = (Get-Date).ToString('yyyyMMdd')
-    }
-
-    foreach ($rule in $Rules) {
-        # Direkt mit [regex]::Match statt dem -match-Operator/$Matches: Ein
-        # .NET Group-Objekt liefert für eine nicht mitgematchte optionale Gruppe
-        # (z. B. "versiontag" ohne Versionsangabe) garantiert .Value = '' -
-        # unabhängig davon, ob $Matches für diese Gruppe überhaupt einen
-        # Schlüssel anlegt. Damit bleibt kein Platzhalter wie "{versiontag}"
-        # unersetzt im Dateinamen stehen.
-        $regex = [regex]::new($rule.match)
-        $regexMatch = $regex.Match($originalName)
-        if ($regexMatch.Success) {
-            foreach ($groupName in $regex.GetGroupNames()) {
-                if ($groupName -eq '0') {
-                    continue
-                }
-
-                $context[$groupName] = $regexMatch.Groups[$groupName].Value
-            }
-
-            $targetName = Expand-Template -Template $rule.rename -Context $context
-            if (-not $targetName) {
-                continue
-            }
-
-            if (-not $targetName.EndsWith(".$extension", [System.StringComparison]::InvariantCultureIgnoreCase)) {
-                $targetName = "$targetName.$extension"
-            }
-
-            return $targetName
-        }
-    }
-
-    if (-not $DefaultFormat) {
-        $DefaultFormat = '{timestamp}_{originalName}'
-    }
-
-    $fallbackName = Expand-Template -Template $DefaultFormat -Context $context
-    if (-not $fallbackName.EndsWith(".$extension", [System.StringComparison]::InvariantCultureIgnoreCase)) {
-        $fallbackName = "$fallbackName.$extension"
-    }
-
-    return $fallbackName
-}
-
-function Get-FileCategory {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [System.IO.FileInfo]$File,
-        [Parameter(Mandatory)] [array]$Rules
-    )
-
-    $originalName = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
-
-    foreach ($rule in $Rules) {
-        if ($originalName -match $rule.match) {
-            $matchResult = $Matches
-            if ($matchResult.ContainsKey('project') -and $matchResult.project -match '^[A-Za-z]+') {
-                return $Matches[0]
-            }
-        }
-    }
-
-    return $null
-}
-
-function Resolve-CategoryTarget {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$LeadingLetters,
-        [Parameter(Mandatory)] [array]$CategoryRoutes
-    )
-
-    foreach ($route in $CategoryRoutes) {
-        if ($LeadingLetters.StartsWith($route.category, [System.StringComparison]::InvariantCultureIgnoreCase)) {
-            return $route.target
-        }
-    }
-
-    return $null
-}
-
-function Get-FileProject {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [System.IO.FileInfo]$File,
-        [Parameter(Mandatory)] [array]$Rules
-    )
-
-    $originalName = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
-
-    foreach ($rule in $Rules) {
-        if ($originalName -match $rule.match) {
-            if ($Matches.ContainsKey('project')) {
-                return $Matches.project
-            }
-        }
-    }
-
-    return $null
-}
-
-function Get-FilePraefixSuffix {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [System.IO.FileInfo]$File,
-        [Parameter(Mandatory)] [array]$Rules
-    )
-
-    $originalName = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
-
-    foreach ($rule in $Rules) {
-        if ($originalName -match $rule.match) {
-            if ($Matches.ContainsKey('praefix') -and $Matches.ContainsKey('suffix')) {
-                return [PSCustomObject]@{ Praefix = $Matches.praefix; Suffix = $Matches.suffix }
-            }
-        }
-    }
-
-    return $null
-}
-
-function Write-NamingConventionHint {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [System.IO.FileInfo]$File,
-        [Parameter(Mandatory)] [hashtable]$HintConfig
-    )
-
-    if (-not $HintConfig.enabled) {
-        return
-    }
-
-    $hintPath = Join-Path $File.DirectoryName $HintConfig.fileName
-    if (Test-Path $hintPath) {
-        return
-    }
-
-    $context = [ordered]@{
-        originalName = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
-        extension = [System.IO.Path]::GetExtension($File.Name).TrimStart('.')
-        fileName = $File.Name
-    }
-    $message = Expand-Template -Template $HintConfig.message -Context $context
-
-    if ($Script:DryRun) {
-        Write-Log -Level Warning -Message "[DryRun] Datei '$($File.Name)' entspricht nicht der erwarteten Namenskonvention. Hinweis-Datei würde erstellt: '$hintPath'"
-    } else {
-        Write-Log -Level Warning -Message "Datei '$($File.Name)' entspricht nicht der erwarteten Namenskonvention. Hinweis-Datei erstellt: '$hintPath'"
-        Set-Content -Path $hintPath -Value $message -Encoding UTF8
-    }
-}
-
-function Get-PraefixSuffixRegistry {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$Path
-    )
-
-    $registry = [ordered]@{
-        Praefixe = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        Suffixe = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-    }
-
-    if (-not (Test-Path $Path)) {
-        Write-Log -Level Warning -Message "Registry-Datei '$Path' wurde nicht gefunden."
-        return $registry
-    }
-
-    foreach ($line in Get-Content -Path $Path) {
-        $trimmed = $line.Trim()
-        if (-not $trimmed -or $trimmed.StartsWith('#')) {
-            continue
-        }
-
-        $separatorIndex = $trimmed.IndexOf('=')
-        if ($separatorIndex -lt 1) {
-            continue
-        }
-
-        $key = $trimmed.Substring(0, $separatorIndex).Trim().ToLowerInvariant()
-        $value = $trimmed.Substring($separatorIndex + 1).Trim()
-        if (-not $value) {
-            continue
-        }
-
-        if ($key -eq 'praefix') {
-            [void]$registry.Praefixe.Add($value)
-        } elseif ($key -eq 'suffix') {
-            [void]$registry.Suffixe.Add($value)
-        }
-    }
-
-    return $registry
-}
-
-function Register-PraefixSuffix {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [hashtable]$Registry,
-        [string]$RegistryFilePath,
-        [Parameter(Mandatory)] [string]$Praefix,
-        [Parameter(Mandatory)] [string]$Suffix
-    )
-
-    $newLines = @()
-
-    if (-not $Registry.Praefixe.Contains($Praefix)) {
-        [void]$Registry.Praefixe.Add($Praefix)
-        $newLines += "praefix=$Praefix"
-        Write-Log -Level Info -Message "Neuer Präfix erkannt und in Registry aufgenommen: '$Praefix'"
-    }
-
-    if (-not $Registry.Suffixe.Contains($Suffix)) {
-        [void]$Registry.Suffixe.Add($Suffix)
-        $newLines += "suffix=$Suffix"
-        Write-Log -Level Info -Message "Neuer Suffix erkannt und in Registry aufgenommen: '$Suffix'"
-    }
-
-    if ($newLines.Count -gt 0 -and $RegistryFilePath) {
-        if ($Script:DryRun) {
-            Write-Log -Level Info -Message "[DryRun] Registry-Datei '$RegistryFilePath' würde aktualisiert: $($newLines -join ', ')"
-        } else {
-            Add-Content -Path $RegistryFilePath -Value $newLines
-        }
-    }
-}
-
-function Get-ProjectRoutes {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$Path
-    )
-
-    $routes = @{}
-
-    if (-not (Test-Path $Path)) {
-        Write-Log -Level Warning -Message "Projekt-Routing-Datei '$Path' wurde nicht gefunden."
-        return $routes
-    }
-
-    foreach ($line in Get-Content -Path $Path) {
-        $trimmed = $line.Trim()
-        if (-not $trimmed -or $trimmed.StartsWith('#')) {
-            continue
-        }
-
-        $separatorIndex = $trimmed.IndexOf('=')
-        if ($separatorIndex -lt 1) {
-            continue
-        }
-
-        $projectName = $trimmed.Substring(0, $separatorIndex).Trim()
-        $targetPath = $trimmed.Substring($separatorIndex + 1).Trim()
-        if ($projectName -and $targetPath) {
-            $routes[$projectName] = $targetPath
-        }
-    }
-
-    return $routes
-}
-
-function Resolve-ProjectTarget {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$ProjectName,
-        [Parameter(Mandatory)] [hashtable]$ProjectRoutes
-    )
-
-    if ($ProjectRoutes.ContainsKey($ProjectName)) {
-        return $ProjectRoutes[$ProjectName]
-    }
-
-    return $null
-}
-
-function Copy-NewFiles {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [AllowEmptyCollection()] [array]$Sources,
-        [Parameter(Mandatory)] [AllowEmptyCollection()] [array]$Targets,
-        [Parameter(Mandatory)] [hashtable]$State,
-        [Parameter(Mandatory)] [AllowEmptyCollection()] [array]$Rules,
-        [Parameter(Mandatory)] [string]$DefaultNameFormat,
-        [array]$CategoryRoutes = @(),
-        [hashtable]$ProjectRoutes = @{},
-        [string]$AufgabenRoot = $null,
-        [hashtable]$PraefixSuffixRegistry = $null,
-        [string]$RegistryFilePath = $null,
-        [array]$ExcludePaths = @(),
-        [hashtable]$NamingConventionHint = $null
-    )
-
-    foreach ($source in $Sources) {
-        $resolvedSourcePaths = Resolve-SourcePaths -PathValue $source.path
-        if ($resolvedSourcePaths.Count -eq 0) {
-            Write-Log -Level Warning -Message "Quellverzeichnis '$($source.path)' existiert nicht oder wurde nicht gefunden. Überspringe."
-            continue
-        }
-
-        foreach ($resolvedSourcePath in $resolvedSourcePaths) {
-            $items = Get-SourceFiles -Source $source -ResolvedPath $resolvedSourcePath
-            Write-Log -Level Info -Message "Gefundene Dateien in '$resolvedSourcePath': $($items.Count)"
-
-            foreach ($item in $items) {
-                if (Test-PathExcluded -FullName $item.FullName -ExcludePaths $ExcludePaths) {
-                    continue
-                }
-
-                $sourceKey = $item.FullName.ToLowerInvariant()
-                if ($State.processed.ContainsKey($sourceKey)) {
-                    continue
-                }
-
-                $targetFileName = Get-TargetFileName -File $item -Rules $Rules -DefaultFormat $DefaultNameFormat
-
-                $effectiveTargets = $Targets
-                $routingActive = ($ProjectRoutes.Count -gt 0) -or ($CategoryRoutes.Count -gt 0)
-                $routedTargetPath = $null
-
-                if ($AufgabenRoot) {
-                    $praefixSuffix = Get-FilePraefixSuffix -File $item -Rules $Rules
-                    if ($praefixSuffix) {
-                        if ($PraefixSuffixRegistry) {
-                            Register-PraefixSuffix -Registry $PraefixSuffixRegistry -RegistryFilePath $RegistryFilePath -Praefix $praefixSuffix.Praefix -Suffix $praefixSuffix.Suffix
-                        }
-
-                        $routedTargetPath = Join-Path (Join-Path $AufgabenRoot $praefixSuffix.Praefix) $praefixSuffix.Suffix
-                    } elseif ($NamingConventionHint -and $NamingConventionHint.enabled) {
-                        Write-NamingConventionHint -File $item -HintConfig $NamingConventionHint
-                        continue
-                    }
-                }
-
-                if (-not $routedTargetPath -and $ProjectRoutes.Count -gt 0) {
-                    $projectName = Get-FileProject -File $item -Rules $Rules
-                    if ($projectName) {
-                        $routedTargetPath = Resolve-ProjectTarget -ProjectName $projectName -ProjectRoutes $ProjectRoutes
-                    }
-                }
-
-                if (-not $routedTargetPath -and $CategoryRoutes.Count -gt 0) {
-                    $leadingLetters = Get-FileCategory -File $item -Rules $Rules
-                    if ($leadingLetters) {
-                        $routedTargetPath = Resolve-CategoryTarget -LeadingLetters $leadingLetters -CategoryRoutes $CategoryRoutes
-                    }
-                }
-
-                if ($routedTargetPath) {
-                    $effectiveTargets = @(@{ path = (Resolve-PathOrAbsolute -PathValue $routedTargetPath); preserveSubfolders = $false })
-                } elseif ($routingActive) {
-                    Write-Log -Level Warning -Message "Keine passende Projekt- oder Kategorie-Zuordnung für '$($item.Name)' gefunden. Datei wird übersprungen."
-                    continue
-                }
-
-                $targetPaths = @()
-
-                foreach ($target in $effectiveTargets) {
-                    $destinationDirectory = $target.path
-                    if ($target.preserveSubfolders) {
-                        $relative = Get-DocFlowRelativePath -BasePath $resolvedSourcePath -FullPath $item.DirectoryName
-                        if ($relative -and $relative -ne '.') {
-                            $destinationDirectory = Join-Path $destinationDirectory $relative
-                        }
-                    }
-
-                    if (-not (Test-Path $destinationDirectory)) {
-                        if ($Script:DryRun) {
-                            Write-Log -Level Info -Message "[DryRun] Verzeichnis würde erstellt: $destinationDirectory"
-                        } else {
-                            Write-Log -Level Info -Message "Erstelle Verzeichnis: $destinationDirectory"
-                            New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
-                        }
-                    }
-
-                    $destinationPath = Join-Path $destinationDirectory $targetFileName
-                    if ($Script:DryRun) {
-                        Write-Log -Level Info -Message "[DryRun] Datei würde kopiert: '$($item.FullName)' -> '$destinationPath'"
-                    } else {
-                        Write-Log -Level Info -Message "Kopiere Datei: '$($item.FullName)' -> '$destinationPath'"
-                        Copy-Item -Path $item.FullName -Destination $destinationPath -Force
-                    }
-
-                    $targetPaths += $destinationPath
-                }
-
-                $State.processed[$sourceKey] = [ordered]@{
-                    source = $item.FullName
-                    targets = $targetPaths
-                    processedAt = (Get-Date).ToString('o')
-                }
-            }
-        }
-    }
+    . $partPath
 }
 
 function Invoke-DocFlowEngine {
@@ -774,43 +53,76 @@ function Invoke-DocFlowEngine {
     }
 
     Write-Log -Level Info -Message "Lade Konfiguration: $ConfigPath"
-    Ensure-TargetDirectories -Targets $config.targets
 
-    $statePath = Resolve-PathOrAbsolute -PathValue $config.stateFile
-    $state = Load-State -StatePath $statePath
-
-    $categoryRoutes = if ($config.categoryRoutes) { $config.categoryRoutes } else { @() }
-
-    $aufgabenRoot = $null
-    if ($config.aufgabenRoot) {
-        $aufgabenRoot = Resolve-PathOrAbsolute -PathValue $config.aufgabenRoot
+    # Multi-Machine-Lock (siehe MULTI-MACHINE-SETUP.md, Baustein 3): nur aktiv,
+    # wenn lockFile konfiguriert ist, und nicht im DryRun (der soll keine
+    # Seiteneffekte haben).
+    $lockPath = $null
+    $lockAcquired = $true
+    if ($config.lockFile -and -not $DryRun) {
+        $lockPath = Resolve-PathOrAbsolute -PathValue $config.lockFile
+        $lockAcquired = Lock-DocFlowRun -LockPath $lockPath -TimeoutMinutes $config.lockTimeoutMinutes
     }
 
-    $registryFilePath = $null
-    $praefixSuffixRegistry = [ordered]@{
-        Praefixe = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        Suffixe = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-    }
-    if ($config.projectRoutesFile) {
-        $registryFilePath = Resolve-PathOrAbsolute -PathValue $config.projectRoutesFile
-        $praefixSuffixRegistry = Get-PraefixSuffixRegistry -Path $registryFilePath
+    if (-not $lockAcquired) {
+        Write-Log -Level Warning -Message "Verarbeitung übersprungen, da eine andere Instanz aktiv ist."
+        return
     }
 
-    $excludePaths = @()
-    foreach ($target in $config.targets) {
-        $excludePaths += $target.path
-    }
-    if ($aufgabenRoot) {
-        $excludePaths += $aufgabenRoot
-    }
+    try {
+        Ensure-TargetDirectories -Targets $config.targets
 
-    Copy-NewFiles -Sources $config.sources -Targets $config.targets -State $state -Rules $config.namingConventions -DefaultNameFormat $config.defaultNameFormat -CategoryRoutes $categoryRoutes -AufgabenRoot $aufgabenRoot -PraefixSuffixRegistry $praefixSuffixRegistry -RegistryFilePath $registryFilePath -ExcludePaths $excludePaths -NamingConventionHint $config.namingConventionHint
+        $statePath = Resolve-PathOrAbsolute -PathValue $config.stateFile
+        $state = Load-State -StatePath $statePath
 
-    if (-not $DryRun) {
-        Save-State -StatePath $statePath -State $state
+        $categoryRoutes = if ($config.categoryRoutes) { $config.categoryRoutes } else { @() }
+
+        $aufgabenRoot = $null
+        if ($config.aufgabenRoot) {
+            $aufgabenRoot = Resolve-PathOrAbsolute -PathValue $config.aufgabenRoot
+        }
+
+        $registryFilePath = $null
+        $praefixSuffixRegistry = [ordered]@{
+            Praefixe = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            Suffixe = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        }
+        if ($config.projectRoutesFile) {
+            $registryFilePath = Resolve-PathOrAbsolute -PathValue $config.projectRoutesFile
+            $praefixSuffixRegistry = Get-PraefixSuffixRegistry -Path $registryFilePath
+        }
+
+        $kuerzelRoutesFilePath = $null
+        $kuerzelRoutes = @{}
+        if ($config.reviewMarker.kuerzelRoutesFile) {
+            $kuerzelRoutesFilePath = Resolve-PathOrAbsolute -PathValue $config.reviewMarker.kuerzelRoutesFile
+            $kuerzelRoutes = Get-KuerzelRoutes -Path $kuerzelRoutesFilePath
+        }
+
+        $excludePaths = @()
+        foreach ($target in $config.targets) {
+            $excludePaths += $target.path
+        }
+        if ($aufgabenRoot) {
+            $excludePaths += $aufgabenRoot
+        }
+
+        Copy-NewFiles -Sources $config.sources -Targets $config.targets -State $state -Rules $config.namingConventions -DefaultNameFormat $config.defaultNameFormat -CategoryRoutes $categoryRoutes -AufgabenRoot $aufgabenRoot -PraefixSuffixRegistry $praefixSuffixRegistry -RegistryFilePath $registryFilePath -ExcludePaths $excludePaths -NamingConventionHint $config.namingConventionHint -KuerzelRoutes $kuerzelRoutes -KuerzelRoutesFilePath $kuerzelRoutesFilePath -KorrigiertFolderName $config.reviewMarker.korrigiertFolderName
+
+        if ($aufgabenRoot -and $config.reviewMarker.enabled) {
+            Copy-ReviewedFiles -AufgabenRoot $aufgabenRoot -ReviewMarker $config.reviewMarker -KuerzelRoutes $kuerzelRoutes -State $state -UnknownKuerzelHint $config.unknownKuerzelHint
+        }
+
+        if (-not $DryRun) {
+            Save-State -StatePath $statePath -State $state
+        }
+
+        Write-Log -Level Info -Message "Verarbeitung abgeschlossen."
+    } finally {
+        if ($lockPath -and $lockAcquired) {
+            Unlock-DocFlowRun -LockPath $lockPath
+        }
     }
-
-    Write-Log -Level Info -Message "Verarbeitung abgeschlossen."
 }
 
-Export-ModuleMember -Function Invoke-DocFlowEngine, Get-TargetFileName, Load-Config, Load-State, Save-State, Get-SourceFiles, Ensure-TargetDirectories, Resolve-PathOrAbsolute, Resolve-SourcePaths, Test-PathExcluded, Expand-Template, Write-Log, Copy-NewFiles, Get-FileCategory, Resolve-CategoryTarget, Get-FileProject, Get-ProjectRoutes, Resolve-ProjectTarget, Get-FilePraefixSuffix, Get-PraefixSuffixRegistry, Register-PraefixSuffix, ConvertTo-DocFlowHashtable, Get-DocFlowRelativePath, Write-NamingConventionHint
+Export-ModuleMember -Function Invoke-DocFlowEngine, Get-TargetFileName, Load-Config, Load-State, Save-State, Get-SourceFiles, Ensure-TargetDirectories, Resolve-PathOrAbsolute, Resolve-SourcePaths, Test-PathExcluded, Expand-Template, Write-Log, Copy-NewFiles, Get-FileCategory, Resolve-CategoryTarget, Get-FileProject, Get-ProjectRoutes, Resolve-ProjectTarget, Get-FilePraefixSuffix, Get-FileInitials, Get-PraefixSuffixRegistry, Test-DocFlowPraefixSuffixKnown, ConvertTo-DocFlowHashtable, Get-DocFlowRelativePath, Write-NamingConventionHint, Get-KuerzelRoutes, Register-Kuerzel, Copy-ReviewedFiles, Lock-DocFlowRun, Unlock-DocFlowRun, Test-DocFlowLockFresh, Test-DocFlowInsideNamedFolder
