@@ -1,13 +1,25 @@
-# Registry bekannter Präfixe und Suffixe für DocFlowEngine
+# Feste Whitelist bekannter Präfixe und Suffixe für DocFlowEngine
 #
-# Diese Datei haelt alle Präfixe (Fächer/Themen) und Suffixe fest, die
+# Diese Datei haelt alle erlaubten Präfixe (Fächer/Themen) und Suffixe fest, die
 # DocFlowEngine in Dateinamen des Schemas
 #   <initialen>_<praefix>_<suffix>_<aufgabennummer>
+# akzeptiert. Nur Dateien, deren Präfix UND Suffix hier bereits stehen, werden
+# nach aufgabenRoot geroutet.
 #
 # Format: eine Zeile pro Eintrag
 #   praefix=<Name>
 #   suffix=<Name>
-# DocFlowEngine ergänzt diese Datei automatisch um neu erkannte Werte.
+#
+# WICHTIG: DocFlowEngine ergänzt diese Datei NICHT mehr automatisch. Ein noch
+# nicht gelisteter Präfix/Suffix wird wie eine falsche Namenskonvention
+# behandelt (Datei wird nicht kopiert, Hinweisdatei beim Schüler wird erzeugt).
+# Neue Fächer/Themen müssen von Hand ergänzt werden.
+#
+# Hinweis (Multi-Machine-Betrieb, siehe MULTI-MACHINE-SETUP.md): Die tatsächlich
+# zur Laufzeit genutzte Datei liegt laut config/docflow-config.psd1
+# (projectRoutesFile) im geteilten OneDrive/SharePoint-Ordner, nicht in diesem
+# Git-Repo. Diese Datei hier dient als Startbestand/Beispiel und muss einmalig
+# dorthin kopiert werden (und danach dort von Hand gepflegt werden).
 
 praefix=Java
 suffix=Arrays
