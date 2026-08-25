@@ -10,6 +10,15 @@ PowerShell-5.1-Bordmitteln umsetzbar sein (keine `pwsh`-only Cmdlets, kein
 Null-Coalescing-Operator `??`, keine Ternary-Operatoren) – passend zur bestehenden
 `#Requires -Version 5.1`-Vorgabe in `scripts/DocFlowEngine.psm1`.
 
+**Status: umgesetzt.** Alle Bausteine 1–5 sind implementiert (Code jetzt aufgeteilt
+in `scripts/DocFlowEngine/CopyForward.ps1` und `scripts/DocFlowEngine/Lock.ps1`,
+siehe [ERWEITERUNGSKONZEPT.md](ERWEITERUNGSKONZEPT.md) Abschnitt 3 zur
+Modularisierung) und per Pester-Tests abgesichert
+(`tests/DocFlowEngine.Tests.ps1`). `config/docflow-config.psd1` zeigt
+`stateFile`/`log.file`/`projectRoutesFile`/`lockFile` bereits auf den geteilten
+Ordner. Baustein 4 (zeitversetzte Scheduled Tasks) ist eine reine
+Betriebs-/Deployment-Maßnahme und bleibt manuell einzurichten.
+
 ## 1. Warum "mehrere Rechner" aktuell nicht funktioniert
 
 Es gibt drei Probleme, die sich gegenseitig verschärfen.

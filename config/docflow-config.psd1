@@ -16,7 +16,11 @@
             path             = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung - Jahrgangsordner/FI*/Austauschordner/'
             recursive        = $true
             includePatterns  = @('*.pdf', '*.docx', '*.doc', '*.xlsx', '*.java', '*.zip', '*.py', '*.txt', '*.md', '*.csv', '*.pptx', '*.png', '*.jpg', '*.jpeg')
-            excludePatterns  = @('.*', 'Thumbs.db', 'desktop.ini', '~$*', 'BITTE_NAMENSKONVENTION_BEACHTEN.txt')  # ~$* sind temporäre Office-Dateien
+            # ~$* sind temporäre Office-Dateien. *.NAMENSKONVENTION-FEHLER.txt und
+            # *.KUERZEL-UNBEKANNT.txt sind DocFlowEngines eigene Pro-Datei-Hinweise
+            # (siehe namingConventionHint/unknownKuerzelHint weiter unten) und dürfen
+            # nicht als eigene Quelldatei erkannt werden.
+            excludePatterns  = @('.*', 'Thumbs.db', 'desktop.ini', '~$*', '*.NAMENSKONVENTION-FEHLER.txt', '*.KUERZEL-UNBEKANNT.txt')
         }
     )
 
@@ -55,25 +59,70 @@
     )
 
     # Wird bei einer Quelle mit 'aufgabenRoot' ausgewertet: Passt eine Datei zu
-    # keiner Regel mit Praefix/Suffix-Gruppen (siehe oben), wird sie NICHT kopiert.
-    # Stattdessen legt DocFlowEngine im selben Ordner wie die Datei eine
-    # Hinweis-Textdatei an, die zur korrekten Umbenennung und zum erneuten
-    # Hochladen auffordert.
+    # keiner Regel mit Praefix/Suffix-Gruppen (siehe oben), ODER ist der erkannte
+    # Praefix/Suffix nicht in project-routes.txt hinterlegt (siehe unten), wird sie
+    # NICHT kopiert. Stattdessen legt DocFlowEngine direkt neben der betroffenen
+    # Datei eine eigene Hinweis-Textdatei an (<Dateiname>.NAMENSKONVENTION-FEHLER.txt),
+    # die zur korrekten Umbenennung und zum erneuten Hochladen auffordert. Ein
+    # Hinweis pro Datei statt einer geteilten Ordner-Hinweisdatei, damit bei
+    # mehreren fehlerhaften Dateien im selben Ordner erkennbar bleibt, welche
+    # gemeint ist (siehe ERWEITERUNGSKONZEPT.md, Abschnitt 2a). Die Meldung darf
+    # optional {praefix}/{suffix} referenzieren (leer, wenn das Namensschema gar
+    # nicht erst gematcht hat).
     namingConventionHint = @{
-        enabled  = $true
-        fileName = 'BITTE_NAMENSKONVENTION_BEACHTEN.txt'
-        message  = 'Deine Datei "{fileName}" entspricht nicht dem vorgegebenen Namensschema initialen[_v<version>]_praefix_suffix_aufgabennummer (z. B. pke_Java_Suffix_abc oder bei einer erneuten Abgabe pke_v2_Java_Suffix_abc). Bitte benenne die Datei entsprechend um und lade sie erneut hoch.'
+        enabled        = $true
+        fileNameSuffix = '.NAMENSKONVENTION-FEHLER.txt'
+        message        = 'Deine Datei "{fileName}" entspricht nicht dem vorgegebenen Namensschema initialen[_v<version>]_praefix_suffix_aufgabennummer (z. B. pke_Java_Suffix_abc oder bei einer erneuten Abgabe pke_v2_Java_Suffix_abc). Bitte benenne die Datei entsprechend um und lade sie erneut hoch.'
     }
 
-    # Registry aller bisher erkannten Präfixe und Suffixe. DocFlowEngine ergänzt
-    # diese Datei automatisch um neu erkannte Werte (siehe config/project-routes.txt).
-    projectRoutesFile = './config/project-routes.txt'
+    # "Korrigiert"-Rücklauf (siehe ERWEITERUNGSKONZEPT.md, Abschnitt 2b): Benennt
+    # ein Ausbilder eine geprüfte Datei unterhalb von 'aufgabenRoot' um und hängt
+    # das Suffix "_k-<kürzel>" an (z. B. "..._abc_k-pke.pdf"), kopiert DocFlowEngine
+    # sie automatisch in <Schülerordner>/<korrigiertFolderName>/ zurück. Die
+    # Zuordnung Kürzel -> Schülerordner wird in kuerzelRoutesFile automatisch beim
+    # normalen Hochladen befüllt (einmalig pro Kürzel, siehe project-routes.txt-
+    # Mechanismus).
+    reviewMarker = @{
+        enabled              = $true
+        pattern              = '_k-(?<kuerzel>[A-Za-z]{3})$'
+        korrigiertFolderName = 'Korrigiert'
+        kuerzelRoutesFile    = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung - Jahrgangsordner/SchuelerMaterial/_DocFlowEngine-Shared/kuerzel-routes.txt'
+    }
 
-    defaultNameFormat = '{timestamp}_{originalName}'
-    stateFile         = './.docflow-state.json'
+    # Hinweis, falls beim Korrigiert-Rücklauf ein Kürzel in _k-<kürzel> auftaucht,
+    # das noch keinem Schülerordner zugeordnet werden konnte (z. B. Tippfehler).
+    unknownKuerzelHint = @{
+        enabled = $true
+        message = 'Die Datei "{fileName}" wurde mit dem Kürzel "{kuerzel}" markiert, aber diesem Kürzel ist noch kein Schülerordner bekannt. Bitte Kürzel prüfen, oder den Schüler einmal regulär hochladen lassen, damit es automatisch registriert wird.'
+    }
+
+    # Feste Liste der erlaubten Präfixe und Suffixe (Fächer/Themen). Nur Dateien,
+    # deren Präfix UND Suffix hier bereits als eigene Zeile ("praefix=..."/
+    # "suffix=...") stehen, werden nach aufgabenRoot geroutet - ein noch nicht
+    # gelisteter Präfix/Suffix wird NICHT mehr automatisch aufgenommen, sondern wie
+    # eine falsche Namenskonvention behandelt (siehe namingConventionHint oben).
+    # Neue Fächer/Themen müssen von Hand in dieser Datei ergänzt werden. Sie liegt
+    # bewusst im bereits über OneDrive/SharePoint geteilten Ordner statt im
+    # Git-Repo, damit sie auf mehreren Rechnern denselben Stand hat (siehe
+    # MULTI-MACHINE-SETUP.md, Baustein 2). config/project-routes.txt im Repo dient
+    # nur als Startbestand/Beispiel und muss einmalig dorthin kopiert werden.
+    projectRoutesFile = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung - Jahrgangsordner/SchuelerMaterial/_DocFlowEngine-Shared/project-routes.txt'
+
+    # Deterministisch statt {timestamp}: nötig für den Ziel-Existenz-Check und den
+    # Multi-Machine-Betrieb (siehe MULTI-MACHINE-SETUP.md, Baustein 5) - ein
+    # Zeitstempel würde bei jedem Lauf einen neuen, nicht wiedererkennbaren Namen
+    # erzeugen.
+    defaultNameFormat = '{date}_{originalName}'
+    stateFile         = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung - Jahrgangsordner/SchuelerMaterial/_DocFlowEngine-Shared/.docflow-state.json'
+
+    # Lock-Datei gegen gleichzeitige Schreibzugriffe mehrerer Rechner auf die
+    # geteilten Dateien oben (siehe MULTI-MACHINE-SETUP.md, Baustein 3). Auf
+    # $null setzen, um Locking zu deaktivieren (Einzelrechner-Betrieb).
+    lockFile           = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung - Jahrgangsordner/SchuelerMaterial/_DocFlowEngine-Shared/.docflow-lock'
+    lockTimeoutMinutes = 15
 
     log = @{
         level = 'Info'
-        file  = './docflow.log'
+        file  = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung - Jahrgangsordner/SchuelerMaterial/_DocFlowEngine-Shared/docflow.log'
     }
 }
