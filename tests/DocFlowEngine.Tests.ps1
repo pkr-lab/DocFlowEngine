@@ -419,5 +419,89 @@ Describe 'Load-Config: Defaults für neue Optionen' {
         $config.namingConventionHint.fileNameSuffix | Should -Be '.NAMENSKONVENTION-FEHLER.txt'
         $config.unknownKuerzelHint.enabled | Should -BeTrue
         $config.lockTimeoutMinutes | Should -Be 15
+        $config.stateRetentionYears | Should -Be 3
+        $config.defaultNameFormat | Should -Be '{timestamp}_{originalName}'
+    }
+}
+
+Describe 'Remove-DocFlowExpiredState' {
+    It 'entfernt Eintraege, deren processedAt aelter als die Aufbewahrungsfrist ist' {
+        $state = @{
+            processed = @{
+                'alt' = @{ source = '/a'; processedAt = (Get-Date).AddYears(-4).ToString('o') }
+                'neu' = @{ source = '/b'; processedAt = (Get-Date).AddMonths(-6).ToString('o') }
+            }
+            reviewedFiles = @{}
+        }
+
+        $removed = Remove-DocFlowExpiredState -State $state -RetentionYears 3
+
+        $removed | Should -Be 1
+        $state.processed.ContainsKey('alt') | Should -BeFalse
+        $state.processed.ContainsKey('neu') | Should -BeTrue
+    }
+
+    It 'entfernt abgelaufene Eintraege auch aus reviewedFiles' {
+        $state = @{
+            processed = @{}
+            reviewedFiles = @{
+                'alt' = @{ source = '/a'; processedAt = (Get-Date).AddYears(-5).ToString('o') }
+            }
+        }
+
+        $removed = Remove-DocFlowExpiredState -State $state -RetentionYears 3
+
+        $removed | Should -Be 1
+        $state.reviewedFiles.Count | Should -Be 0
+    }
+
+    It 'laesst Eintraege ohne verwertbares processedAt unangetastet' {
+        $state = @{
+            processed = @{
+                'ohne-datum' = @{ source = '/a' }
+                'kaputtes-datum' = @{ source = '/b'; processedAt = 'kein-datum' }
+            }
+            reviewedFiles = @{}
+        }
+
+        $removed = Remove-DocFlowExpiredState -State $state -RetentionYears 3
+
+        $removed | Should -Be 0
+        $state.processed.Count | Should -Be 2
+    }
+}
+
+Describe 'Get-DocFlowMigratedFileName' {
+    BeforeAll {
+        $script:migrationRules = @(
+            @{
+                match = '^(?<initials>[A-Za-z]+)(?<versiontag>_v[0-9]+)?_(?<praefix>[A-Za-z]+)_(?<suffix>[A-Za-z0-9]+)_(?<aufgabennummer>[A-Za-z0-9]+)$'
+            }
+        )
+        $script:migrationRegistry = [ordered]@{
+            Praefixe = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            Suffixe  = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        }
+        [void]$script:migrationRegistry.Praefixe.Add('Java')
+        [void]$script:migrationRegistry.Suffixe.Add('Arrays')
+    }
+
+    It 'laesst einen bereits regelkonformen Namen unveraendert' {
+        Get-DocFlowMigratedFileName -Name 'pke_Java_Arrays_abc' -Rules $script:migrationRules -Registry $script:migrationRegistry | Should -Be 'pke_Java_Arrays_abc'
+    }
+
+    It 'erkennt bekannten Praefix und Suffix aus der Whitelist und Initialen am Anfang, Aufgabennummer am Ende' {
+        $result = Get-DocFlowMigratedFileName -Name 'pke Java Arrays Blatt3' -Rules $script:migrationRules -Registry $script:migrationRegistry
+        $result | Should -Be 'pke_Java_Arrays_Blatt3'
+    }
+
+    It 'setzt Platzhalter fuer Teile, die sich nicht bestimmen lassen' {
+        $result = Get-DocFlowMigratedFileName -Name 'irgendwas komplett anderes' -Rules $script:migrationRules -Registry $script:migrationRegistry -Placeholder 'PLATZHALTER'
+        $result | Should -Match 'PLATZHALTER'
+    }
+
+    It 'nutzt ueberall Platzhalter, wenn keine Registry uebergeben wird' {
+        $result = Get-DocFlowMigratedFileName -Name 'pke Java Arrays Blatt3' -Rules $script:migrationRules -Registry $null
+        $result | Should -Be 'pke_PLATZHALTER_PLATZHALTER_Blatt3'
     }
 }

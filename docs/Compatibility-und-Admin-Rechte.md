@@ -11,9 +11,10 @@ zusätzlich unterstützt.
 ### Geprüfter Code
 
 Alle Skriptdateien tragen `#Requires -Version 5.1`:
-`scripts/DocFlowEngine.ps1`, `scripts/DocFlowEngine.psm1`, `tests/DocFlowEngine.Tests.ps1`. Die
-Teilmodule unter `scripts/DocFlowEngine/*.ps1` werden per Dot-Sourcing aus `DocFlowEngine.psm1`
-geladen und erben dessen Versionsvorgabe.
+`scripts/DocFlowEngine.ps1`, `scripts/DocFlowEngine.psm1`, `scripts/Invoke-OneDriveSync.ps1`,
+`scripts/Rename-ExistingAufgaben.ps1`, `tests/DocFlowEngine.Tests.ps1`. Die Teilmodule unter
+`scripts/DocFlowEngine/*.ps1` werden per Dot-Sourcing aus `DocFlowEngine.psm1` geladen und erben
+dessen Versionsvorgabe.
 
 ### Methode
 
@@ -25,7 +26,7 @@ geladen und erben dessen Versionsvorgabe.
    - `using namespace`
    - `ConvertFrom-Json -AsHashtable` (erst ab PowerShell 6) - im Code bewusst **nicht** verwendet;
      stattdessen implementiert `ConvertTo-DocFlowHashtable` (`Common.ps1`) dieselbe Umwandlung von
-     Hand, siehe Kommentar dort.
+     Hand, siehe [Implementation-Notes.md](Implementation-Notes.md).
    - `ForEach-Object -Parallel`, `Join-String`, `$PSStyle`, `Get-Error`, `$IsWindows`/`$IsLinux`/`$IsMacOS`/`$IsCoreCLR` (alles PS-6+/7+-only)
 
    Ergebnis: **keine Treffer.**
@@ -70,16 +71,21 @@ geladen und erben dessen Versionsvorgabe.
    Zur Kontrolle: `Invoke-ScriptAnalyzer ... | Select-Object -ExpandProperty Message | Select-String "The command '(?!Write-Log)"`
    liefert keine Treffer - außer `Write-Log` taucht kein einziger fremder Befehl in den Funden auf.
 
-4. **Laufende Probe:** Alle 26 Pester-Tests (`tests/DocFlowEngine.Tests.ps1`) sowie mehrere manuelle
-   End-to-End-Läufe von `Invoke-DocFlowEngine` wurden gegen PowerShell 7.4.6 ausgeführt (auf dieser
-   Entwicklungsumgebung ist kein Windows PowerShell 5.1 verfügbar). PowerShell 7 ist bezüglich der
-   hier verwendeten Sprachkonstrukte eine Obermenge von 5.1 - ein Fehlschlag unter 7 wäre also auch
-   unter 5.1 fehlgeschlagen. Die schritte 1-3 oben schließen zusätzlich aus, dass 7-spezifische
-   Syntax verwendet wurde, die unter 7 zufällig auch liefe, unter 5.1 aber bräche.
+4. **Laufende Probe:** Alle 37 Pester-Tests (`tests/DocFlowEngine.Tests.ps1`) sowie mehrere manuelle
+   End-to-End-Läufe von `Invoke-DocFlowEngine`, `scripts/Rename-ExistingAufgaben.ps1` und
+   `scripts/Invoke-OneDriveSync.ps1` (dessen "OneDrive.exe nicht gefunden"-Zweig, da auf dieser
+   Entwicklungsumgebung kein OneDrive installiert ist) wurden gegen PowerShell 7.6.5 ausgeführt (auf
+   dieser Entwicklungsumgebung ist kein Windows PowerShell 5.1 verfügbar). PowerShell 7 ist
+   bezüglich der hier verwendeten Sprachkonstrukte eine Obermenge von 5.1 - ein Fehlschlag unter 7
+   wäre also auch unter 5.1 fehlgeschlagen. Die Schritte 1-3 oben schließen zusätzlich aus, dass
+   7-spezifische Syntax verwendet wurde, die unter 7 zufällig auch liefe, unter 5.1 aber bräche.
 
 ### Ergebnis
 
-Kein Befund. Der gesamte Code (`scripts/`, `tests/`) ist mit reinem Windows PowerShell 5.1 lauffähig.
+Kein Befund. Der gesamte Code (`scripts/`, `tests/`) ist mit reinem Windows PowerShell 5.1 lauffähig -
+zuletzt erneut geprüft nach Hinzunahme von `Invoke-OneDriveSync.ps1`, `Rename-ExistingAufgaben.ps1`
+und `Remove-DocFlowExpiredState`/`Get-DocFlowMigratedFileName` (siehe
+[Konzepte/ERWEITERUNGSKONZEPT.md](Konzepte/ERWEITERUNGSKONZEPT.md) Abschnitt 7).
 
 ## 2. Keine Admin-/Root-Rechte nötig
 
@@ -88,8 +94,10 @@ Kein Befund. Der gesamte Code (`scripts/`, `tests/`) ist mit reinem Windows Powe
 | DocFlowEngine ausführen (`DocFlowEngine.ps1`) | Nein | Nur Datei-Lese-/Schreibzugriffe auf vom Benutzer bereits beschreibbare Ordner (OneDrive-Quell-/Zielordner im eigenen Benutzerprofil). Keine Registry-Änderungen, kein Dienst, keine Systemdateien. |
 | `-ExecutionPolicy Bypass` beim Aufruf | Nein | Gilt nur für den startenden Prozess (`-File`-Aufruf), nicht systemweit; verändert keine dauerhafte Einstellung. |
 | Lock-Datei (`scripts/DocFlowEngine/Lock.ps1`) | Nein | Reine Dateioperationen (`Test-Path`/`Get-Item`/`Set-Content`/`Remove-Item`) im selben, bereits beschreibbaren geteilten Ordner. |
-| Geplante Ausführung unter Windows | Nein | `Register-ScheduledTask` ohne `-User`/`-RunLevel Highest` legt eine Aufgabe im Kontext des aktuellen Benutzers an ("User Task") - siehe [README](../README.md#regelmäßige-automatisierung). Keine Registrierung als Dienst oder unter SYSTEM nötig. |
+| Geplante Ausführung unter Windows | Nein | `Register-ScheduledTask` mit `-Principal ... -LogonType Interactive` (ohne `-RunLevel Highest`) legt eine Aufgabe im Kontext des aktuellen, angemeldeten Benutzers an ("User Task") - siehe [README](../README.md#regelmäßige-automatisierung). Keine Registrierung als Dienst oder unter SYSTEM nötig. |
 | Geplante Ausführung unter macOS/Linux | Nein | `crontab -e` bearbeitet die Crontab des aktuellen Benutzers, kein `sudo` nötig. |
+| `scripts/Invoke-OneDriveSync.ps1` ausführen | Nein | `Stop-Process`/`Start-Process` auf den bereits im eigenen Benutzerkontext laufenden OneDrive-Prozess - keine anderen Benutzerprozesse, kein Dienst, keine Registry. |
+| `scripts/Rename-ExistingAufgaben.ps1` ausführen | Nein | Reine Datei-Lese-/Rename-/Schreibzugriffe (`Rename-Item`, `Get-ChildItem`, State-Datei) auf bereits vom Benutzer beschreibbare Ordner - identisches Rechteprofil wie `DocFlowEngine.ps1`. |
 | Pester-/PSScriptAnalyzer-Installation (nur für Entwicklung/Tests) | Nein | `Install-Module ... -Scope CurrentUser` installiert nur für den aktuellen Benutzer, kein Admin-Kontext nötig. So auch in diesem Repo verifiziert. |
 | PowerShell 7 unter macOS installieren (optional, nur für Nicht-Windows-Entwicklung) | Nein | `brew install powershell` braucht kein `sudo`. |
 | PowerShell 7 unter Linux installieren (optional, nur für Nicht-Windows-Entwicklung) | Je nach Methode | `apt-get install` braucht `sudo`; alternativ funktioniert das offizielle `.tar.gz`-Archiv ohne jede Installation/Admin-Rechte (in ein Benutzerverzeichnis entpacken, `./pwsh` direkt starten - so wurde auch in dieser Entwicklungsumgebung vorgegangen). Betrifft ohnehin nur optionale Entwicklungsumgebungen, nicht den eigentlichen Windows-Zielbetrieb. |

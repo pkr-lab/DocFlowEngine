@@ -182,21 +182,34 @@ ohne geteilten Ordner), findet keine Synchronisierung statt.
 auch die Seed-Synchronisierung): Jeder syntaktisch zum Schema passende Präfix/Suffix wird akzeptiert
 (altes, offenes Verhalten).
 
-## `defaultNameFormat` (optional)
+## `defaultNameFormat` (optional, Default `{timestamp}_{originalName}`)
 
 ```powershell
 defaultNameFormat = '{date}_{originalName}'
 ```
 
-Fallback-Template, wenn keine `namingConventions`-Regel passt. `{date}_{originalName}` (statt
-`{timestamp}_{originalName}`) ist für Multi-Machine-Betrieb empfohlen: `{timestamp}` erzeugt bei
-jedem Lauf einen neuen, nicht wiedererkennbaren Namen und verhindert damit den
+Fallback-Template, wenn keine `namingConventions`-Regel passt. `{date}_{originalName}` (statt dem
+Default `{timestamp}_{originalName}`) ist für Multi-Machine-Betrieb empfohlen: `{timestamp}` erzeugt
+bei jedem Lauf einen neuen, nicht wiedererkennbaren Namen und verhindert damit den
 Ziel-Existenz-Check (siehe [MULTI-MACHINE-SETUP.md](Konzepte/MULTI-MACHINE-SETUP.md)).
 
 ## `stateFile` (optional, Default `./.docflow-state.json`)
 
 Pfad zur JSON-Zustandsdatei (bereits verarbeitete Quelldateien + zurückkopierte Korrigiert-Dateien).
 Im Multi-Machine-Betrieb auf einen geteilten Ordner zeigen lassen.
+
+## `stateRetentionYears` (optional, Default `3`)
+
+```powershell
+stateRetentionYears = 3
+```
+
+Vor jedem `Save-State` entfernt `Remove-DocFlowExpiredState` (`State.ps1`) alle Einträge aus
+`processed` und `reviewedFiles`, deren `processedAt`-Zeitstempel älter als `stateRetentionYears`
+Jahre ist - damit `stateFile` bei Dauerbetrieb nicht unbegrenzt wächst. Einträge ohne auswertbaren
+Zeitstempel bleiben unangetastet (konservativ: im Zweifel nichts löschen). Auf `0` oder `$null`
+setzen, um das Aufräumen zu deaktivieren. Im `-DryRun` wird nur geloggt, was entfernt würde - der
+State bleibt unverändert (wird ohnehin nicht gespeichert).
 
 ## `lockFile` / `lockTimeoutMinutes` (optional)
 

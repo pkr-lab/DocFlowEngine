@@ -39,6 +39,7 @@ Alle unten aufgeführten Funktionen sind über `Export-ModuleMember` öffentlich
 |---|---|
 | `Load-State -StatePath <string>` | Lädt `.docflow-state.json`; liefert `@{ processed = @{}; reviewedFiles = @{} }`, falls die Datei fehlt oder nicht lesbar ist. |
 | `Save-State -StatePath <string> -State <hashtable>` | Schreibt den State als JSON zurück, legt das Zielverzeichnis bei Bedarf an. |
+| `Remove-DocFlowExpiredState -State <hashtable> -RetentionYears <int>` | Entfernt aus `processed` und `reviewedFiles` alle Einträge, deren `processedAt` älter als `RetentionYears` ist (Einträge ohne auswertbaren Zeitstempel bleiben erhalten). Gibt die Anzahl entfernter Einträge zurück. Wird in `Invoke-DocFlowEngine` vor `Save-State` aufgerufen (siehe [Configuration.md](Configuration.md), `stateRetentionYears`). |
 
 ## `Lock.ps1` - Multi-Machine-Lock
 
@@ -62,6 +63,7 @@ Alle unten aufgeführten Funktionen sind über `Export-ModuleMember` öffentlich
 | `Get-PraefixSuffixRegistry -Path <string>` | Lädt `project-routes.txt` in zwei `HashSet[string]` (`Praefixe`, `Suffixe`, case-insensitive). |
 | `Sync-ProjectRoutesFromSeed -SeedPath <string> -TargetPath <string>` | Gleicht die versionierte Seed-Whitelist (`projectRoutesSeedFile`) additiv gegen die tatsächlich genutzte Whitelist (`projectRoutesFile`) ab: legt `TargetPath` an, falls er fehlt, ergänzt sonst nur dort fehlende Zeilen aus `SeedPath`. No-op, falls beide Pfade identisch sind oder `SeedPath` fehlt. |
 | `Write-NamingConventionHint -File <FileInfo> -HintConfig <hashtable> [-PraefixSuffix <PSCustomObject>]` | Erzeugt die individuelle Hinweisdatei `<Dateiname><fileNameSuffix>` neben der betroffenen Datei (keine Wirkung, falls die Datei schon existiert). `-PraefixSuffix` optional, damit die Meldung `{praefix}`/`{suffix}` referenzieren kann. |
+| `Get-DocFlowMigratedFileName -Name <string> -Rules <array> [-Registry <hashtable>] [-Placeholder <string> = 'PLATZHALTER']` | Best-effort-Ableitung eines regelkonformen Namens aus einem beliebigen Alt-Dateinamen: unverändert, falls `Name` bereits einer `Rules`-Regel entspricht; sonst Token-Suche nach genau einem bekannten Präfix/Suffix aus `Registry` (`Get-PraefixSuffixRegistry`), führende 2-5 Buchstaben als Initialen, letztes verbleibendes Token als Aufgabennummer - für jeden nicht bestimmbaren Teil `Placeholder`. Kernlogik von `scripts/Rename-ExistingAufgaben.ps1` (siehe unten). |
 
 ## `CopyForward.ps1` - Quell-Scan und Vorwärtskopie
 
@@ -92,6 +94,18 @@ Load-Config
     → Get-KuerzelRoutes (falls reviewMarker.kuerzelRoutesFile konfiguriert)
     → Copy-NewFiles           (Vorwärtslauf, inkl. Register-Kuerzel bei Bedarf)
     → Copy-ReviewedFiles      (Rücklauf, nur falls aufgabenRoot + reviewMarker.enabled)
+    → Remove-DocFlowExpiredState (falls stateRetentionYears > 0)
     → Save-State              (nicht im DryRun)
   → Unlock-DocFlowRun (finally-Block, immer falls Lock erworben wurde)
 ```
+
+## Eigenständige Skripte (kein Teil von `Invoke-DocFlowEngine`)
+
+Diese beiden Skripte importieren zwar dasselbe Modul, laufen aber unabhängig vom regulären
+`Invoke-DocFlowEngine`-Ablauf und werden nicht über die Aufgabenplanung mit ausgeführt (außer
+explizit so eingerichtet, siehe README).
+
+| Skript | Zweck |
+|---|---|
+| `scripts/Invoke-OneDriveSync.ps1` | Kein Modul-Import. Beendet den OneDrive-Prozess des Benutzers und startet ihn neu (`Stop-Process`/`Start-Process`), um einen frischen Sync-Check anzustoßen - kein offizieller, garantierter "Sync jetzt"-Befehl existiert. `-ExecutablePath` überschreibbar; ohne gefundene `OneDrive.exe` (z. B. `$env:LOCALAPPDATA` nicht gesetzt, wie auf macOS/Linux) bricht das Skript kontrolliert mit einer Warnung ab statt mit einem Fehler. |
+| `scripts/Rename-ExistingAufgaben.ps1 -Path <string> [-ConfigPath <string>] [-Apply]` | Manuell auszuführendes Migrationsskript für Alt-Bestand. Nutzt `Load-Config`/`Get-PraefixSuffixRegistry`/`Get-DocFlowMigratedFileName`/`Lock-DocFlowRun`/`Load-State`/`Save-State`. Ohne `-Apply` reine Vorschau (keine Änderung). Mit `-Apply`: benennt Dateien um (Kollisionsschutz durch angehängten Zähler) und registriert sie - falls `-Path` unterhalb eines konfigurierten `sources[]`-Eintrags liegt - unter demselben Dedup-Key-Format wie `Copy-NewFiles` (`"$($source.path)\|<relativer Pfad>"`) in `.docflow-state.json`, damit `Invoke-DocFlowEngine` sie beim nächsten Lauf nicht erneut als neue Datei behandelt. |
