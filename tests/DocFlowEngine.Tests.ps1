@@ -124,32 +124,48 @@ Describe 'Copy-ReviewedFiles ("Korrigiert"-Rücklauf)' {
 
         $script:reviewMarker = @{
             enabled              = $true
-            pattern              = '_k-(?<kuerzel>[A-Za-z]{3})$'
+            pattern              = '_k-[A-Za-z0-9]+$'
             korrigiertFolderName = 'Korrigiert'
         }
+        $script:rules = @(
+            @{
+                match = '^(?<initials>[A-Za-z]+)(?<versiontag>_v[0-9]+)?_(?<praefix>[A-Za-z]+)_(?<suffix>[A-Za-z0-9]+)_(?<aufgabennummer>[A-Za-z0-9]+)$'
+            }
+        )
         $script:kuerzelRoutes = @{ pke = $script:studentFolder }
         $script:state = @{ processed = @{}; reviewedFiles = @{} }
     }
 
-    It 'kopiert eine mit _k-Kuerzel markierte Datei in den Korrigiert-Unterordner des Schuelerordners' {
+    It 'kopiert eine mit _k-Marker versehene Datei in den Korrigiert-Unterordner des Schuelerordners' {
         $reviewedFile = Join-Path $script:aufgabenRoot '20260825_pke_Java_Suffix_abc_k-pke.pdf'
         Set-Content -Path $reviewedFile -Value 'dummy'
 
-        Copy-ReviewedFiles -AufgabenRoot $script:aufgabenRoot -ReviewMarker $script:reviewMarker -KuerzelRoutes $script:kuerzelRoutes -State $script:state
+        Copy-ReviewedFiles -AufgabenRoot $script:aufgabenRoot -ReviewMarker $script:reviewMarker -KuerzelRoutes $script:kuerzelRoutes -State $script:state -Rules $script:rules
 
         $expected = Join-Path (Join-Path $script:studentFolder 'Korrigiert') '20260825_pke_Java_Suffix_abc_k-pke.pdf'
         Test-Path $expected | Should -BeTrue
         Test-Path $reviewedFile | Should -BeTrue
     }
 
+    It 'ignoriert den Text nach _k- vollstaendig - massgeblich ist das im Dateinamen selbst enthaltene Kuerzel, nicht der Marker' {
+        $reviewedFile = Join-Path $script:aufgabenRoot '20260825_pke_Java_Suffix_abc_k-xyz.pdf'
+        Set-Content -Path $reviewedFile -Value 'dummy'
+
+        Copy-ReviewedFiles -AufgabenRoot $script:aufgabenRoot -ReviewMarker $script:reviewMarker -KuerzelRoutes $script:kuerzelRoutes -State $script:state -Rules $script:rules
+
+        $expected = Join-Path (Join-Path $script:studentFolder 'Korrigiert') '20260825_pke_Java_Suffix_abc_k-xyz.pdf'
+        Test-Path $expected | Should -BeTrue
+        ($script:state.reviewedFiles.Values | Select-Object -First 1).kuerzel | Should -Be 'pke'
+    }
+
     It 'kopiert dieselbe Datei bei einem zweiten Lauf nicht erneut (Dedup über State)' {
         $reviewedFile = Join-Path $script:aufgabenRoot '20260825_pke_Java_Suffix_abc_k-pke.pdf'
         Set-Content -Path $reviewedFile -Value 'dummy'
 
-        Copy-ReviewedFiles -AufgabenRoot $script:aufgabenRoot -ReviewMarker $script:reviewMarker -KuerzelRoutes $script:kuerzelRoutes -State $script:state
+        Copy-ReviewedFiles -AufgabenRoot $script:aufgabenRoot -ReviewMarker $script:reviewMarker -KuerzelRoutes $script:kuerzelRoutes -State $script:state -Rules $script:rules
         $script:state.reviewedFiles.Count | Should -Be 1
 
-        Copy-ReviewedFiles -AufgabenRoot $script:aufgabenRoot -ReviewMarker $script:reviewMarker -KuerzelRoutes $script:kuerzelRoutes -State $script:state
+        Copy-ReviewedFiles -AufgabenRoot $script:aufgabenRoot -ReviewMarker $script:reviewMarker -KuerzelRoutes $script:kuerzelRoutes -State $script:state -Rules $script:rules
         $script:state.reviewedFiles.Count | Should -Be 1
     }
 
@@ -158,7 +174,7 @@ Describe 'Copy-ReviewedFiles ("Korrigiert"-Rücklauf)' {
         Set-Content -Path $reviewedFile -Value 'dummy'
         $unknownHint = @{ enabled = $true; message = 'Kuerzel {kuerzel} unbekannt fuer {fileName}' }
 
-        Copy-ReviewedFiles -AufgabenRoot $script:aufgabenRoot -ReviewMarker $script:reviewMarker -KuerzelRoutes $script:kuerzelRoutes -State $script:state -UnknownKuerzelHint $unknownHint
+        Copy-ReviewedFiles -AufgabenRoot $script:aufgabenRoot -ReviewMarker $script:reviewMarker -KuerzelRoutes $script:kuerzelRoutes -State $script:state -Rules $script:rules -UnknownKuerzelHint $unknownHint
 
         $script:state.reviewedFiles.Count | Should -Be 0
         Test-Path "$reviewedFile.KUERZEL-UNBEKANNT.txt" | Should -BeTrue
@@ -170,9 +186,45 @@ Describe 'Copy-ReviewedFiles ("Korrigiert"-Rücklauf)' {
         $alreadyThere = Join-Path $korrigiertDir '20260825_pke_Java_Suffix_abc_k-pke.pdf'
         Set-Content -Path $alreadyThere -Value 'dummy'
 
-        Copy-ReviewedFiles -AufgabenRoot $script:aufgabenRoot -ReviewMarker $script:reviewMarker -KuerzelRoutes $script:kuerzelRoutes -State $script:state
+        Copy-ReviewedFiles -AufgabenRoot $script:aufgabenRoot -ReviewMarker $script:reviewMarker -KuerzelRoutes $script:kuerzelRoutes -State $script:state -Rules $script:rules
 
         $script:state.reviewedFiles.Count | Should -Be 0
+    }
+}
+
+Describe 'Sync-ProjectRoutesFromSeed' {
+    It 'erstellt die Ziel-Whitelist aus dem Startbestand, wenn sie noch nicht existiert' {
+        $seedPath = Join-Path $TestDrive "seed-$(New-Guid).txt"
+        $targetPath = Join-Path $TestDrive "shared-$(New-Guid)/project-routes.txt"
+        Set-Content -Path $seedPath -Value @('praefix=Java', 'suffix=Arrays')
+
+        Sync-ProjectRoutesFromSeed -SeedPath $seedPath -TargetPath $targetPath
+
+        Test-Path $targetPath | Should -BeTrue
+        Get-Content -Path $targetPath | Should -Be @('praefix=Java', 'suffix=Arrays')
+    }
+
+    It 'ergänzt nur die im Ziel fehlenden Zeilen aus dem Startbestand, ohne dort bereits vorhandene (z. B. automatisch registrierte) Zeilen anzutasten' {
+        $seedPath = Join-Path $TestDrive "seed2-$(New-Guid).txt"
+        $targetPath = Join-Path $TestDrive "shared2-$(New-Guid).txt"
+        Set-Content -Path $seedPath -Value @('praefix=Java', 'suffix=Arrays', 'praefix=Python')
+        Set-Content -Path $targetPath -Value @('praefix=Java', 'suffix=Arrays', 'suffix=NurAmZiel')
+
+        Sync-ProjectRoutesFromSeed -SeedPath $seedPath -TargetPath $targetPath
+
+        $lines = Get-Content -Path $targetPath
+        $lines | Should -Contain 'praefix=Python'
+        $lines | Should -Contain 'suffix=NurAmZiel'
+        ($lines | Where-Object { $_ -eq 'praefix=Java' }).Count | Should -Be 1
+    }
+
+    It 'macht nichts, wenn der Startbestand nicht existiert' {
+        $seedPath = Join-Path $TestDrive "missing-seed-$(New-Guid).txt"
+        $targetPath = Join-Path $TestDrive "shared3-$(New-Guid).txt"
+        Set-Content -Path $targetPath -Value @('praefix=Java')
+
+        { Sync-ProjectRoutesFromSeed -SeedPath $seedPath -TargetPath $targetPath } | Should -Not -Throw
+        Get-Content -Path $targetPath | Should -Be @('praefix=Java')
     }
 }
 
@@ -194,10 +246,6 @@ Describe 'Copy-NewFiles: relativer Dedup-Key und Ziel-Existenz-Check' {
     }
 
     It 'baut den Dedup-Key aus dem konfigurierten (ggf. wildcardhaltigen) source.path statt dem aufgelösten Rechnerpfad (Multi-Machine-Fix)' {
-        # Simuliert MULTI-MACHINE-SETUP.md Baustein 1: derselbe konfigurierte
-        # Wildcard-Pfad löst je nach Rechner/Benutzername zu unterschiedlichen
-        # absoluten Pfaden auf. Der Dedup-Key muss trotzdem identisch sein -
-        # er darf sich also nicht aus dem aufgelösten Pfad ableiten.
         $marker = "wc-$(New-Guid)"
         $realDir = Join-Path $TestDrive $marker
         New-Item -Path $realDir -ItemType Directory -Force | Out-Null

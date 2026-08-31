@@ -130,7 +130,7 @@ Zielordner (Ausbilder prüft, benennt um)
        kuerzelRoutesFile    = '<geteilter Ordner>/kuerzel-routes.txt'
    }
    ```
-   Formatbeispiel/Vorlage der Registry-Datei: `config/kuerzel-routes.example.txt` (die tatsächlich genutzte Datei liegt im geteilten Ordner, nicht im Git-Repo — siehe Abschnitt 1).
+   Formatbeispiel/Vorlage der Registry-Datei: ursprünglich `config/kuerzel-routes.example.txt`, inzwischen entfernt und durch die Formatbeschreibung in [Configuration.md](../Configuration.md) ersetzt, da reine Kommentar-/Beispieldateien nicht mehr im Code-/Config-Baum gepflegt werden (die tatsächlich genutzte Datei liegt ohnehin im geteilten Ordner, nicht im Git-Repo — siehe Abschnitt 1).
 
 5. **Neue Funktion** `Copy-ReviewedFiles` (analog zu `Copy-NewFiles`, in `scripts/DocFlowEngine/CopyBack.ps1`): durchsucht `aufgabenRoot` rekursiv nach Dateien, deren Name (ohne Extension) auf `reviewMarker.pattern` matcht — bewusst `aufgabenRoot`, nicht die generischen `targets[]`, da nur dort Dateien mit `initials`/`praefix`/`suffix`-Namensschema landen, für die ein Kürzel-Marker überhaupt Sinn ergibt. Extrahiert `kuerzel`, schlägt über `Get-KuerzelRoutes` den Schülerordner nach und kopiert nach `<Schülerordner>/Korrigiert/<Zieldateiname>`. Die Datei wird **kopiert**, nicht verschoben — das Original bleibt für den Ausbilder erhalten.
 
@@ -165,6 +165,7 @@ Alle drei Grundsatzfragen sind entschieden:
 3. **Korrigiert-Rücklauf** (Abschnitt 2b): Ordnername `Korrigiert`, Zuordnung Kürzel→Schülerordner über eine automatisch geführte Registry (`kuerzel-routes.txt`, analog `project-routes.txt`), befüllt beim ersten verarbeiteten Upload je Kürzel. Der Schülerordner ist identisch mit dem bereits konfigurierten `sources[]`-Eintrag, keine weitere Ordnerebene nötig. Kürzel sind eindeutige, dauerhafte 3-Buchstaben-Codes pro Schüler — daher keine Mehrdeutigkeit bei mehreren Aufgaben.
 4. **Sprachwahl:** Nur PowerShell, modularisiert in Teilmodule (Abschnitt 3) — kein Python, kein Ansible.
 5. **Präfix/Suffix-Whitelist** (Abschnitt 5, Follow-up): `project-routes.txt` ist keine automatisch wachsende Registry mehr, sondern eine von Hand gepflegte Whitelist. Unbekannter Präfix/Suffix → Namenskonvention-Fehler statt automatischer Aufnahme.
+6. **Korrigiert-Rücklauf ohne Bedeutung des Marker-Texts + automatische Whitelist-Seed-Synchronisierung** (Abschnitt 6, Folgekorrektur): Der Text nach `_k-` im Korrigiert-Rücklauf ist rein kosmetisch und hat keinen Einfluss mehr auf das Zielverzeichnis; maßgeblich ist das ohnehin im Dateinamen stehende Schüler-Kürzel. `project-routes.txt` wird nicht mehr manuell in den geteilten Ordner kopiert, sondern bei jedem Lauf automatisch aus dem versionierten Startbestand synchronisiert.
 
 ---
 
@@ -184,3 +185,73 @@ Alle drei Grundsatzfragen sind entschieden:
 **Getestet:** drei neue Pester-Tests (bekannter Präfix/Suffix → Routing; unbekannter Präfix/Suffix → Hinweisdatei, keine Kopie, keine Registrierung; keine Registry konfiguriert → altes permissives Verhalten) sowie ein manueller End-to-End-Lauf mit drei Dateien (bekannte Kombination, unbekannter Suffix, unbekannter Präfix) — Whitelist griff in beiden Fehlerfällen korrekt, `project-routes.txt` blieb unverändert.
 
 Damit sind alle ursprünglich offenen Punkte sowie das Follow-up-Feedback geklärt.
+
+---
+
+## 6. Korrigiert-Rücklauf: Marker-Text ohne Bedeutung + automatische Whitelist-Seed-Synchronisierung (Folgekorrektur)
+
+**Anlass:** Nutzer-Feedback zu zwei Punkten aus dem laufenden Betrieb:
+
+1. Beim Korrigiert-Rücklauf (Abschnitt 2b) sollte der Text nach `_k-` **keinen** Einfluss auf das
+   Zielverzeichnis haben - er sollte frei wählbar sein (z. B. das Kürzel des Ausbilders statt des
+   Schülers), ohne dass eine falsche/fremde Kombination zu einer Fehlroutierung oder einem
+   "Kürzel unbekannt"-Hinweis führt.
+2. `project-routes.txt` sollte nicht mehr manuell in den geteilten Ordner kopiert werden müssen
+   (siehe Abschnitt 5, letzter Punkt: "die Datei muss jetzt von Hand gepflegt werden") - DocFlowEngine
+   sollte den Startbestand automatisch dorthin übertragen und bei jedem Lauf auf Änderungen prüfen.
+
+**Ist-Zustand vor dieser Korrektur:** `Copy-ReviewedFiles` (`scripts/DocFlowEngine/CopyBack.ps1`)
+extrahierte über die `kuerzel`-Gruppe des `reviewMarker.pattern`-Regex (`_k-(?<kuerzel>[A-Za-z]{3})$`)
+den Text **nach** `_k-` und nutzte genau diesen Text als Schlüssel für die Suche in
+`KuerzelRoutes`. Das setzte voraus, dass der Ausbilder dort exakt das schon registrierte
+Schüler-Kürzel eintippt (z. B. `_k-pke`, wenn der Schüler mit `pke` registriert ist). Ein
+abweichender Text (Tippfehler, oder bewusst das eigene Kürzel des Ausbilders) führte entweder zu
+einem "Kürzel unbekannt"-Hinweis, oder - im ungünstigeren Fall einer zufälligen Kollision mit dem
+Kürzel eines *anderen* Schülers - zu einer Rückkopie in den **falschen** Schülerordner. Das
+im vorderen Teil des (ohnehin unveränderten) Dateinamens bereits vorhandene Schüler-Kürzel wurde
+nicht genutzt.
+
+`project-routes.txt` (`config/project-routes.txt`) war laut Abschnitt 5 ein rein manuell in den
+geteilten Ordner zu kopierender Startbestand; DocFlowEngine griff nur lesend über `projectRoutesFile`
+darauf zu.
+
+**Umsetzung:**
+
+- **Korrigiert-Rücklauf:** `Copy-ReviewedFiles` nutzt die `kuerzel`-Gruppe aus `reviewMarker.pattern`
+  nicht mehr für die Registry-Suche. Stattdessen entfernt sie den erkannten `_k-...`-Marker sowie ein
+  führendes `{date}_` vom Dateinamen und wendet auf den Rest dieselben `namingConventions`-Regeln an
+  wie beim ursprünglichen Hochladen, über die neue, aus `Get-FileInitials` herausgelöste
+  Kernfunktion `Get-FileInitialsFromName -Name <string> -Rules <array>` (`Naming.ps1`). Das Ergebnis
+  (die `initials`-Gruppe, z. B. `pke`) ist der tatsächliche Registry-Schlüssel. `reviewMarker.pattern`
+  wurde entsprechend von `_k-(?<kuerzel>[A-Za-z]{3})$` (exakt 3 Buchstaben, semantisch relevant) zu
+  `_k-[A-Za-z0-9]+$` (beliebige alphanumerische Zeichenfolge, rein als Erkennungsmerkmal) gelockert -
+  `Copy-ReviewedFiles` bekam dafür den neuen Pflichtparameter `-Rules`, durchgereicht aus
+  `Invoke-DocFlowEngine` als `$config.namingConventions`.
+- **Whitelist-Synchronisierung:** Neue Funktion `Sync-ProjectRoutesFromSeed -SeedPath <string>
+  -TargetPath <string>` (`Naming.ps1`), aufgerufen in `Invoke-DocFlowEngine` vor
+  `Get-PraefixSuffixRegistry`. Neuer Config-Schlüssel `projectRoutesSeedFile` (Default
+  `./config/project-routes.txt`) benennt den versionierten Startbestand; `projectRoutesFile` bleibt
+  wie bisher die tatsächlich genutzte Datei. Fehlt `projectRoutesFile` am Zielort, wird es 1:1 aus
+  der Seed-Datei angelegt; existiert es bereits, werden nur dort fehlende Zeilen aus der Seed-Datei
+  ergänzt (rein additiv, damit automatisch/manuell nur am Zielort vorhandene Zeilen erhalten
+  bleiben). Sind Seed- und Zielpfad identisch (Einzelrechner-Betrieb ohne geteilten Ordner), ist die
+  Funktion ein No-op.
+
+**Korrektur beim Implementieren:** Die naheliegendste Umsetzung für die Kürzel-Ermittlung wäre
+gewesen, `Get-FileInitials` direkt mit den bestehenden `namingConventions`-Regeln auf den
+Dateinamen der bereits im `aufgabenRoot`-Baum liegenden (und damit schon umbenannten) Datei
+anzuwenden. Das scheitert: Die Regel `Initials-Praefix-Suffix-Aufgabe` matcht wegen des
+vorangestellten `{date}_` nicht mehr (das Pattern verlangt `^[A-Za-z]+` am Anfang), und die
+danach greifende Fallback-Regel `Date-prefix` hat keine `initials`-Gruppe. Deshalb entfernt
+`Copy-ReviewedFiles` vor dem Aufruf von `Get-FileInitialsFromName` zusätzlich ein führendes,
+8-stelliges Datum (`-replace '^\d{8}_', ''`, passend zum in `Get-TargetFileName` fest codierten
+`date`-Format `yyyyMMdd`) - danach entspricht der Rest wieder exakt dem ursprünglichen,
+unumbenannten Namensschema.
+
+**Getestet:** Die Pester-Tests für `Copy-ReviewedFiles` decken jetzt zusätzlich ab, dass ein vom
+Schüler-Kürzel abweichender Marker-Text (`_k-xyz` bei Schüler-Kürzel `pke`) korrekt anhand des
+Dateinamens statt des Markers geroutet wird; neue Tests für `Sync-ProjectRoutesFromSeed` decken das
+Neuanlegen aus dem Startbestand, das rein additive Ergänzen fehlender Zeilen (ohne bereits am Ziel
+vorhandene, z. B. automatisch entstandene Zeilen anzutasten) sowie das No-op-Verhalten bei
+fehlender Seed-Datei ab.
+

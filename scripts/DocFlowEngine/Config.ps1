@@ -43,10 +43,6 @@ function Load-Config {
         $config.namingConventionHint.message = 'Deine Datei "{fileName}" entspricht nicht dem vorgegebenen Namensschema (initialen_praefix_suffix_aufgabennummer). Bitte benenne die Datei entsprechend um und lade sie erneut hoch.'
     }
 
-    # "Korrigiert"-Rücklauf: Ausbilder markiert eine geprüfte Datei im
-    # aufgabenRoot-Baum mit einem Kürzel-Suffix (z. B. "_k-pke"); DocFlowEngine
-    # kopiert sie daraufhin in <Schülerordner>/<korrigiertFolderName>/ zurück.
-    # Standardmäßig deaktiviert, bis reviewMarker in der Config explizit gesetzt wird.
     if (-not $config.reviewMarker) {
         $config.reviewMarker = @{ enabled = $false }
     }
@@ -54,7 +50,7 @@ function Load-Config {
         $config.reviewMarker.enabled = $false
     }
     if (-not $config.reviewMarker.pattern) {
-        $config.reviewMarker.pattern = '_k-(?<kuerzel>[A-Za-z]{3})$'
+        $config.reviewMarker.pattern = '_k-[A-Za-z0-9]+$'
     }
     if (-not $config.reviewMarker.korrigiertFolderName) {
         $config.reviewMarker.korrigiertFolderName = 'Korrigiert'
@@ -70,13 +66,13 @@ function Load-Config {
         $config.unknownKuerzelHint.enabled = $true
     }
     if (-not $config.unknownKuerzelHint.message) {
-        $config.unknownKuerzelHint.message = 'Die Datei "{fileName}" wurde mit dem Kürzel "{kuerzel}" markiert, aber diesem Kürzel ist noch kein Schülerordner bekannt (kuerzel-routes.txt). Bitte prüfen, ob das Kürzel korrekt ist, oder den Schüler einmal regulär hochladen lassen, damit das Kürzel automatisch registriert wird.'
+        $config.unknownKuerzelHint.message = 'Die Datei "{fileName}" ist als Korrektur markiert, aber für das im Dateinamen erkannte Kürzel "{kuerzel}" ist noch kein Schülerordner bekannt (kuerzel-routes.txt). Bitte prüfen, oder den Schüler einmal regulär hochladen lassen, damit das Kürzel automatisch registriert wird.'
     }
 
-    # Multi-Machine-Betrieb (siehe MULTI-MACHINE-SETUP.md): Lock-Datei
-    # verhindert, dass zwei Rechner gleichzeitig in dieselbe (geteilte)
-    # State-/Registry-Datei schreiben. Ohne konfigurierten lockFile-Pfad
-    # bleibt das Verhalten wie bisher (kein Locking).
+    if (-not $config.ContainsKey('projectRoutesSeedFile')) {
+        $config.projectRoutesSeedFile = './config/project-routes.txt'
+    }
+
     if (-not $config.ContainsKey('lockFile')) {
         $config.lockFile = $null
     }

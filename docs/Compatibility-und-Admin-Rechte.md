@@ -3,7 +3,7 @@
 Dieses Dokument hält fest, wie geprüft wurde, dass DocFlowEngine (a) ausschließlich mit
 PowerShell-5.1-kompatibler Syntax/Cmdlets auskommt und (b) an keiner Stelle Admin-/Root-Rechte
 voraussetzt. Zielplattform ist Windows PowerShell 5.1 auf Schulrechnern (siehe
-[MULTI-MACHINE-SETUP.md](../MULTI-MACHINE-SETUP.md)); PowerShell 7+ auf Windows/macOS/Linux wird
+[MULTI-MACHINE-SETUP.md](Konzepte/MULTI-MACHINE-SETUP.md)); PowerShell 7+ auf Windows/macOS/Linux wird
 zusätzlich unterstützt.
 
 ## 1. PowerShell-5.1-Kompatibilität
