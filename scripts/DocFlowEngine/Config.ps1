@@ -22,8 +22,15 @@ function Load-Config {
         throw "Konfiguration muss mindestens eine Regel unter 'namingConventions' enthalten."
     }
 
+    if (-not $config.defaultNameFormat) {
+        $config.defaultNameFormat = '{timestamp}_{originalName}'
+    }
+
     if (-not $config.stateFile) {
         $config.stateFile = './.docflow-state.json'
+    }
+    if (-not $config.stateRetentionYears) {
+        $config.stateRetentionYears = 3
     }
 
     if (-not $config.log) {

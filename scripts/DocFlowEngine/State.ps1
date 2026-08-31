@@ -39,3 +39,32 @@ function Save-State {
 
     $State | ConvertTo-Json -Depth 5 | Set-Content -Path $StatePath -Encoding UTF8
 }
+
+function Remove-DocFlowExpiredState {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [hashtable]$State,
+        [Parameter(Mandatory)] [int]$RetentionYears
+    )
+
+    $cutoff = (Get-Date).AddYears(-$RetentionYears)
+    $removedCount = 0
+
+    foreach ($sectionName in @('processed', 'reviewedFiles')) {
+        if (-not $State.ContainsKey($sectionName)) {
+            continue
+        }
+
+        $section = $State[$sectionName]
+        foreach ($key in @($section.Keys)) {
+            $timestamp = $section[$key].processedAt
+            $parsedDate = [datetime]::MinValue
+            if ($timestamp -and [datetime]::TryParse($timestamp, [ref]$parsedDate) -and $parsedDate -lt $cutoff) {
+                $section.Remove($key)
+                $removedCount++
+            }
+        }
+    }
+
+    return $removedCount
+}

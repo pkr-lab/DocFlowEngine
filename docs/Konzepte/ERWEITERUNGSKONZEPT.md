@@ -237,6 +237,84 @@ darauf zu.
   bleiben). Sind Seed- und Zielpfad identisch (Einzelrechner-Betrieb ohne geteilten Ordner), ist die
   Funktion ein No-op.
 
+---
+
+## 7. Aufgabenplanung, State-Pruning und Alt-Bestand-Migration (Erweiterung)
+
+**Anlass:** Drei weitere Anforderungen aus dem laufenden Betrieb: (a) die Aufgabenplanung soll vor
+dem eigentlichen Lauf einen OneDrive-Sync anstoßen und dafür ausführlicher dokumentiert werden
+(Netzwerk-Voraussetzung, Multi-Machine-Zeiten, Benutzer-Anmeldung), (b) `.docflow-state.json` soll
+nicht unbegrenzt wachsen, (c) ein separates, manuell auszuführendes Skript soll bereits vorhandene,
+nicht dem Namensschema folgende Aufgaben-Dateien nachträglich ins Schema bringen.
+
+**Umsetzung:**
+
+- **OneDrive-Sync-Anstoß:** Neues eigenständiges Skript `scripts/Invoke-OneDriveSync.ps1` (kein
+  Modul-Import). Da es keinen offiziellen "Sync jetzt"-Befehl von Microsoft gibt, beendet und
+  startet es den OneDrive-Prozess des Benutzers neu (`Stop-Process`/`Start-Process`) - erzwingt
+  einen frischen Dateicheck, ist aber kein garantierter, blockierender Sync-Abschluss. Deshalb läuft
+  es als **eigene, zeitlich vorgelagerte** Scheduled-Task-Aufgabe, 10 Minuten vor der eigentlichen
+  `DocFlowEngine.ps1`-Aufgabe, statt eines (nicht existierenden) synchronen Wartens. Beide Aufgaben
+  bekommen `-RunOnlyIfNetworkAvailable` sowie `-LogonType Interactive` (Begründung: der
+  OneDrive-Client läuft nur innerhalb einer interaktiven Benutzersitzung; ein Task "unabhängig von
+  der Anmeldung" liefe in einer Sitzung ohne aktives OneDrive). Vollständiges Beispiel inkl.
+  Multi-Machine-Zeitstaffelung: [README.md](../../README.md#regelmäßige-automatisierung).
+- **State-Pruning:** Neue Funktion `Remove-DocFlowExpiredState -State <hashtable> -RetentionYears
+  <int>` (`State.ps1`), aufgerufen in `Invoke-DocFlowEngine` vor `Save-State`. Entfernt aus
+  `processed` und `reviewedFiles` alle Einträge mit `processedAt` älter als `RetentionYears` Jahre;
+  Einträge ohne auswertbaren Zeitstempel bleiben konservativ erhalten. Neuer Config-Schlüssel
+  `stateRetentionYears` (Default `3`, `0`/`$null` deaktiviert das Aufräumen).
+- **Alt-Bestand-Migration:** Neues eigenständiges Skript `scripts/Rename-ExistingAufgaben.ps1`,
+  **nicht** Teil des automatischen Laufs. Nimmt `-Path` (frei wählbar, kein fest verdrahteter
+  Ordner - der Aufrufer entscheidet, welcher Alt-Bestand gemeint ist) und `-Apply`
+  (Sicherheitsnetz: ohne `-Apply` reine Vorschau, nichts wird verändert - ein Massen-Umbenennen
+  echter Dateien anhand einer Heuristik ist schwer rückgängig zu machen). Kernlogik in neuer,
+  eigenständig getesteter Funktion `Get-DocFlowMigratedFileName -Name <string> -Rules <array>
+  [-Registry <hashtable>] [-Placeholder <string>]` (`Naming.ps1`): unverändert, falls der Name
+  bereits einer `namingConventions`-Regel entspricht; sonst Token-Suche nach genau einem bekannten
+  Präfix/Suffix aus der bestehenden Whitelist (`Get-PraefixSuffixRegistry`, dieselbe Datei wie beim
+  regulären Lauf), führende 2-5 Buchstaben als Initialen, letztes verbleibendes Token als
+  Aufgabennummer - für jeden nicht bestimmbaren Teil der Platzhalter `PLATZHALTER` statt eines
+  geratenen Werts. Kollisionsschutz durch angehängten Zähler (`_2`, `_3`, ...), sowohl gegen bereits
+  auf der Platte vorhandene als auch gegen im selben Lauf bereits geplante Zielnamen.
+
+  **Skip-Mechanismus ohne sichtbaren Datei-Tag:** Statt eines Markers im Dateinamen (der bei jeder
+  echten Hausaufgabe im Explorer stören würde) registriert `-Apply` jede umbenannte Datei - sofern
+  sie unterhalb eines konfigurierten `sources[]`-Eintrags liegt - direkt in `.docflow-state.json`
+  (`processed`), mit demselben Dedup-Key-Format wie `Copy-NewFiles`
+  (`"$($source.path)|<relativer Pfad>"`, siehe Abschnitt 1). Der reguläre `Invoke-DocFlowEngine`-Lauf
+  überspringt diese Dateien dadurch strukturell über denselben Mechanismus, der auch normal bereits
+  verarbeitete Dateien überspringt - kein neuer Sonderfall in `Copy-NewFiles` nötig. Liegt `-Path`
+  außerhalb aller `sources[]`-Einträge, entfällt die Registrierung (dann betrifft der
+  Dedup-Mechanismus die Dateien ohnehin nicht). Das Skript nutzt zusätzlich
+  `Lock-DocFlowRun`/`Unlock-DocFlowRun`, um nicht zeitgleich mit einem echten Lauf zu schreiben.
+  Bereits von DocFlowEngine selbst erzeugte Hinweisdateien (`.NAMENSKONVENTION-FEHLER.txt`,
+  `.KUERZEL-UNBEKANNT.txt`) sowie Dateien im `Korrigiert`-Ordner werden von der Umbenennung
+  ausgenommen.
+
+**Getestet:** Neue Pester-Tests für `Remove-DocFlowExpiredState` (alter Eintrag entfernt, junger
+bleibt, Eintrag ohne verwertbares Datum bleibt, betrifft beide State-Sektionen) und
+`Get-DocFlowMigratedFileName` (bereits regelkonform bleibt unverändert, bekannter Präfix/Suffix aus
+Whitelist wird erkannt, unbestimmbare Teile bekommen den Platzhalter, keine Registry → durchgehend
+Platzhalter für Präfix/Suffix). Zusätzlich ein manueller End-to-End-Test in einem Scratch-Verzeichnis
+mit vier Alt-Dateien (bereits regelkonform, vollständig ableitbar, teilweise ableitbar, gar nicht
+ableitbar) sowie einer bereits vorhandenen `.NAMENSKONVENTION-FEHLER.txt`-Hinweisdatei: Vorschau
+ohne `-Apply` hat nichts verändert; `-Apply` hat korrekt umbenannt/platzhaltert, die Hinweisdatei
+ignoriert, und die migrierten Dateien in `.docflow-state.json` registriert; ein anschließender
+regulärer `Invoke-DocFlowEngine`-Lauf hat die migrierten Dateien korrekt übersprungen (keine neuen
+Hinweisdateien, keine Kopien) und nur die eine tatsächlich neue, unbearbeitete Datei verarbeitet.
+
+**Nebenbei gefundener Bug (behoben):** Beim Aufbau des End-to-End-Tests fehlte in der Test-Config
+`defaultNameFormat` - `Invoke-DocFlowEngine` brach daraufhin mit einer wenig aussagekräftigen
+`Cannot bind argument to parameter 'DefaultNameFormat' because it is an empty string`-Meldung ab.
+Ursache: `Load-Config` setzte für `defaultNameFormat` (anders als für praktisch alle anderen
+optionalen Felder) keinen Default, obwohl `Get-TargetFileName` intern bereits einen Fallback
+(`{timestamp}_{originalName}`) für genau diesen Fall vorsieht - der aber nie erreicht wurde, weil
+`Copy-NewFiles` den Wert als Pflichtparameter entgegennimmt und die leere Zeichenkette schon vorher
+vom Parameter-Binding abgelehnt wird. Fix: `Load-Config` setzt jetzt denselben Fallback-Wert als
+Default, bevor die Config an `Copy-NewFiles` weitergereicht wird - siehe `defaultNameFormat` in
+[Configuration.md](../Configuration.md).
+
 **Korrektur beim Implementieren:** Die naheliegendste Umsetzung für die Kürzel-Ermittlung wäre
 gewesen, `Get-FileInitials` direkt mit den bestehenden `namingConventions`-Regeln auf den
 Dateinamen der bereits im `aufgabenRoot`-Baum liegenden (und damit schon umbenannten) Datei
