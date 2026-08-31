@@ -52,7 +52,7 @@ Format (kein JSON/CSV). Für Auswertungen eignet sich `Select-String`/`grep` auf
 |---|---|
 | `Gefundene Dateien in '...': 4` | Anzahl der in einem Quellordner gefundenen (nicht ausgeschlossenen) Dateien vor Dedup-Prüfung. |
 | `Kopiere Datei: ... -> ...` | Erfolgreiche Kopie im Vorwärtslauf. |
-| `Zieldatei existiert bereits, überspringe Kopie: ...` | Ziel-Existenz-Check hat gegriffen (Multi-Machine-Absicherung, siehe [MULTI-MACHINE-SETUP.md](../MULTI-MACHINE-SETUP.md)). |
+| `Zieldatei existiert bereits, überspringe Kopie: ...` | Ziel-Existenz-Check hat gegriffen (Multi-Machine-Absicherung, siehe [MULTI-MACHINE-SETUP.md](Konzepte/MULTI-MACHINE-SETUP.md)). |
 | `Datei '...' entspricht nicht der erwarteten Namenskonvention. Hinweis-Datei erstellt: ...` | Naming-Hint wurde erzeugt (Schema nicht erfüllt oder Präfix/Suffix unbekannt). |
 | `Neues Kürzel erkannt und in Kuerzel-Registry aufgenommen: '...' -> '...'` | Kürzel→Schülerordner-Zuordnung wurde erstmalig registriert. |
 | `Kopiere korrigierte Datei zurück: ... -> .../Korrigiert/...` | "Korrigiert"-Rücklauf hat eine Datei zurückkopiert. |

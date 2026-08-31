@@ -16,8 +16,12 @@ siehe [ERWEITERUNGSKONZEPT.md](ERWEITERUNGSKONZEPT.md) Abschnitt 3 zur
 Modularisierung) und per Pester-Tests abgesichert
 (`tests/DocFlowEngine.Tests.ps1`). `config/docflow-config.psd1` zeigt
 `stateFile`/`log.file`/`projectRoutesFile`/`lockFile` bereits auf den geteilten
-Ordner. Baustein 4 (zeitversetzte Scheduled Tasks) ist eine reine
-Betriebs-/Deployment-Maßnahme und bleibt manuell einzurichten.
+Ordner. Das anfängliche Kopieren von `config/project-routes.txt` in diesen
+geteilten Ordner (Baustein 2) ist inzwischen kein manueller Schritt mehr, sondern
+läuft bei jedem Start automatisch über `Sync-ProjectRoutesFromSeed` (siehe
+[ERWEITERUNGSKONZEPT.md](ERWEITERUNGSKONZEPT.md) Abschnitt 6). Baustein 4
+(zeitversetzte Scheduled Tasks) ist eine reine Betriebs-/Deployment-Maßnahme und
+bleibt manuell einzurichten.
 
 ## 1. Warum "mehrere Rechner" aktuell nicht funktioniert
 
@@ -48,12 +52,20 @@ Datei. Eine geteilte State-Datei würde also *nicht* verhindern, dass die Datei 
 beiden Rechnern erneut kopiert wird. **Dieser Punkt muss zuerst behoben werden**,
 alles andere baut darauf auf.
 
-### c) `project-routes.txt` liegt im Git-Repo, wird aber zur Laufzeit beschrieben
+### c) `project-routes.txt` liegt im Git-Repo, die Laufzeit-Kopie müsste manuell gepflegt werden
 
-`Register-PraefixSuffix` hängt neu erkannte Präfixe/Suffixe an
-`config/project-routes.txt` an. Läuft das auf zwei unabhängigen Git-Klonen, laufen
-die Klone auseinander (Merge-Konflikte oder stille Divergenz, je nachdem ob
-committed/gepusht wird).
+*Historisch (siehe unten für den aktuellen Stand):* `config/project-routes.txt` ist der
+versionierte Startbestand der Präfix/Suffix-Whitelist. Läuft DocFlowEngine auf zwei unabhängigen
+Git-Klonen und würde jeder Rechner nur seinen eigenen Repo-Ordner lesen, hätte jeder Klon
+potenziell einen anderen Stand - insbesondere, wenn neue Fächer/Themen von Hand ergänzt werden und
+nicht auf allen Rechnern gleichermaßen gepusht/gepullt wird.
+
+**Aktueller Stand:** Gelöst über Baustein 2 plus die automatische Seed-Synchronisierung
+(`Sync-ProjectRoutesFromSeed`, siehe [ERWEITERUNGSKONZEPT.md](ERWEITERUNGSKONZEPT.md) Abschnitt 6):
+`config/project-routes.txt` im Repo bleibt der einzige Ort, an dem von Hand neue Fächer/Themen
+ergänzt werden; die tatsächlich von allen Rechnern genutzte Kopie liegt im geteilten Ordner
+(`projectRoutesFile`) und wird bei jedem Lauf automatisch aus dem Repo-Stand (`projectRoutesSeedFile`)
+ergänzt - kein manuelles Kopieren, keine Divergenz zwischen Klonen.
 
 ## 2. Empfohlene Architektur
 
@@ -76,7 +88,10 @@ z. B. `.../SchuelerMaterial/_DocFlowEngine-Shared/.docflow-state.json`.
 `Resolve-PathOrAbsolute` unterstützt Wildcard-Pfade bereits, das lässt sich direkt
 wiederverwenden. So bekommt jeder Rechner über den normalen OneDrive-Sync
 automatisch den aktuellen Stand – ohne zusätzliche Infrastruktur (kein
-Netzlaufwerk, kein eigener Server nötig).
+Netzlaufwerk, kein eigener Server nötig). Für `projectRoutesFile` übernimmt
+`Sync-ProjectRoutesFromSeed` zusätzlich das anfängliche Anlegen und laufende
+Ergänzen aus dem Repo-Startbestand (`projectRoutesSeedFile`) - dieser eine Pfad
+muss also nicht mehr manuell in den geteilten Ordner kopiert werden.
 
 ### Baustein 3 – Lock-Datei gegen Schreibkonflikte
 

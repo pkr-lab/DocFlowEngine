@@ -1,9 +1,5 @@
 #Requires -Version 5.1
 
-# DocFlowEngine ist in fokussierte Teilmodule aufgeteilt (siehe
-# ERWEITERUNGSKONZEPT.md, Abschnitt 3), um die frühere ~800-Zeilen-Einzeldatei
-# zu vermeiden. Diese Root-Moduldatei bindet sie per Dot-Sourcing ein und
-# stellt den öffentlichen Einstiegspunkt Invoke-DocFlowEngine bereit.
 $Script:DocFlowModuleParts = @(
     'Common.ps1'
     'Config.ps1'
@@ -54,9 +50,6 @@ function Invoke-DocFlowEngine {
 
     Write-Log -Level Info -Message "Lade Konfiguration: $ConfigPath"
 
-    # Multi-Machine-Lock (siehe MULTI-MACHINE-SETUP.md, Baustein 3): nur aktiv,
-    # wenn lockFile konfiguriert ist, und nicht im DryRun (der soll keine
-    # Seiteneffekte haben).
     $lockPath = $null
     $lockAcquired = $true
     if ($config.lockFile -and -not $DryRun) {
@@ -89,6 +82,12 @@ function Invoke-DocFlowEngine {
         }
         if ($config.projectRoutesFile) {
             $registryFilePath = Resolve-PathOrAbsolute -PathValue $config.projectRoutesFile
+
+            if ($config.projectRoutesSeedFile) {
+                $seedFilePath = Resolve-PathOrAbsolute -PathValue $config.projectRoutesSeedFile
+                Sync-ProjectRoutesFromSeed -SeedPath $seedFilePath -TargetPath $registryFilePath
+            }
+
             $praefixSuffixRegistry = Get-PraefixSuffixRegistry -Path $registryFilePath
         }
 
@@ -110,7 +109,7 @@ function Invoke-DocFlowEngine {
         Copy-NewFiles -Sources $config.sources -Targets $config.targets -State $state -Rules $config.namingConventions -DefaultNameFormat $config.defaultNameFormat -CategoryRoutes $categoryRoutes -AufgabenRoot $aufgabenRoot -PraefixSuffixRegistry $praefixSuffixRegistry -RegistryFilePath $registryFilePath -ExcludePaths $excludePaths -NamingConventionHint $config.namingConventionHint -KuerzelRoutes $kuerzelRoutes -KuerzelRoutesFilePath $kuerzelRoutesFilePath -KorrigiertFolderName $config.reviewMarker.korrigiertFolderName
 
         if ($aufgabenRoot -and $config.reviewMarker.enabled) {
-            Copy-ReviewedFiles -AufgabenRoot $aufgabenRoot -ReviewMarker $config.reviewMarker -KuerzelRoutes $kuerzelRoutes -State $state -UnknownKuerzelHint $config.unknownKuerzelHint
+            Copy-ReviewedFiles -AufgabenRoot $aufgabenRoot -ReviewMarker $config.reviewMarker -KuerzelRoutes $kuerzelRoutes -State $state -Rules $config.namingConventions -UnknownKuerzelHint $config.unknownKuerzelHint
         }
 
         if (-not $DryRun) {
@@ -125,4 +124,4 @@ function Invoke-DocFlowEngine {
     }
 }
 
-Export-ModuleMember -Function Invoke-DocFlowEngine, Get-TargetFileName, Load-Config, Load-State, Save-State, Get-SourceFiles, Ensure-TargetDirectories, Resolve-PathOrAbsolute, Resolve-SourcePaths, Test-PathExcluded, Expand-Template, Write-Log, Copy-NewFiles, Get-FileCategory, Resolve-CategoryTarget, Get-FileProject, Get-ProjectRoutes, Resolve-ProjectTarget, Get-FilePraefixSuffix, Get-FileInitials, Get-PraefixSuffixRegistry, Test-DocFlowPraefixSuffixKnown, ConvertTo-DocFlowHashtable, Get-DocFlowRelativePath, Write-NamingConventionHint, Get-KuerzelRoutes, Register-Kuerzel, Copy-ReviewedFiles, Lock-DocFlowRun, Unlock-DocFlowRun, Test-DocFlowLockFresh, Test-DocFlowInsideNamedFolder
+Export-ModuleMember -Function Invoke-DocFlowEngine, Get-TargetFileName, Load-Config, Load-State, Save-State, Get-SourceFiles, Ensure-TargetDirectories, Resolve-PathOrAbsolute, Resolve-SourcePaths, Test-PathExcluded, Expand-Template, Write-Log, Copy-NewFiles, Get-FileCategory, Resolve-CategoryTarget, Get-FileProject, Get-ProjectRoutes, Resolve-ProjectTarget, Get-FilePraefixSuffix, Get-FileInitials, Get-FileInitialsFromName, Get-PraefixSuffixRegistry, Sync-ProjectRoutesFromSeed, Test-DocFlowPraefixSuffixKnown, ConvertTo-DocFlowHashtable, Get-DocFlowRelativePath, Write-NamingConventionHint, Get-KuerzelRoutes, Register-Kuerzel, Copy-ReviewedFiles, Lock-DocFlowRun, Unlock-DocFlowRun, Test-DocFlowLockFresh, Test-DocFlowInsideNamedFolder

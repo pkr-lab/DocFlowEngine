@@ -110,20 +110,10 @@ function Copy-NewFiles {
                     continue
                 }
 
-                # Bereits zurückkopierte, korrigierte Dateien liegen im
-                # Korrigiert-Unterordner desselben Quellordners (siehe
-                # Copy-ReviewedFiles) und dürfen hier nicht erneut als "neue"
-                # Quelldatei aufgegriffen werden - sonst entsteht eine Schleife.
                 if (Test-DocFlowInsideNamedFolder -DirectoryName $item.DirectoryName -FolderName $KorrigiertFolderName) {
                     continue
                 }
 
-                # Dedup-Key relativ zur (ggf. wildcardhaltigen) Quellwurzel statt
-                # zum vollen aufgelösten Pfad: Auf verschiedenen Rechnern liefert
-                # derselbe Wildcard-Quellpfad unterschiedliche aufgelöste Pfade
-                # (z. B. abweichender Windows-Benutzername), aber $source.path
-                # aus der Konfiguration ist auf jedem Rechner identisch. Siehe
-                # MULTI-MACHINE-SETUP.md, Baustein 1.
                 $relativeSourcePath = Get-DocFlowRelativePath -BasePath $resolvedSourcePath -FullPath $item.FullName
                 $sourceKey = ("$($source.path)|$relativeSourcePath").ToLowerInvariant()
                 if ($State.processed.ContainsKey($sourceKey)) {
@@ -139,13 +129,6 @@ function Copy-NewFiles {
                 if ($AufgabenRoot) {
                     $praefixSuffix = Get-FilePraefixSuffix -File $item -Rules $Rules
 
-                    # Präfix/Suffix müssen dem Namensschema entsprechen UND (falls eine
-                    # Registry konfiguriert ist) bereits als bekannt hinterlegt sein.
-                    # Anders als früher wird ein neuer, unbekannter Präfix/Suffix NICHT
-                    # mehr automatisch akzeptiert und in die Registry aufgenommen,
-                    # sondern wie ein Namenskonvention-Fehler behandelt. Ohne
-                    # konfigurierte Registry (kein RegistryFilePath) bleibt es beim alten,
-                    # permissiven Verhalten.
                     $praefixSuffixValid = $false
                     if ($praefixSuffix) {
                         if ($RegistryFilePath) {
@@ -159,11 +142,6 @@ function Copy-NewFiles {
                         if ($KuerzelRoutes) {
                             $initials = Get-FileInitials -File $item -Rules $Rules
                             if ($initials) {
-                                # Bewusst der unmittelbare Ordner der Datei ($item.DirectoryName),
-                                # nicht die (ggf. für alle Schüler gemeinsame) Quellwurzel
-                                # $resolvedSourcePath: Nur so wird bei einem rekursiv gescannten,
-                                # gemeinsamen Austauschordner mit Schüler-Unterordnern der
-                                # tatsächliche, individuelle Schülerordner registriert.
                                 Register-Kuerzel -Routes $KuerzelRoutes -RoutesFilePath $KuerzelRoutesFilePath -Kuerzel $initials -SourcePath $item.DirectoryName
                             }
                         }
@@ -218,11 +196,6 @@ function Copy-NewFiles {
 
                     $destinationPath = Join-Path $destinationDirectory $targetFileName
 
-                    # Defense-in-Depth für den Multi-Machine-Betrieb (siehe
-                    # MULTI-MACHINE-SETUP.md, Baustein 5): existiert die Zieldatei
-                    # bereits (z. B. weil die State-Datei zwischen Rechnern noch
-                    # nicht synchronisiert ist), wird sie nicht mit -Force
-                    # überschrieben, sondern übersprungen.
                     if (Test-Path $destinationPath) {
                         Write-Log -Level Warning -Message "Zieldatei existiert bereits, überspringe Kopie: '$destinationPath'"
                     } elseif ($Script:DryRun) {

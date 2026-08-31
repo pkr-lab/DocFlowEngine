@@ -56,9 +56,11 @@ Alle unten aufgeführten Funktionen sind über `Export-ModuleMember` öffentlich
 | `Get-FileCategory` / `Resolve-CategoryTarget` | Legacy-Routing über führende Buchstaben + `categoryRoutes`; in der aktuellen Konfiguration ungenutzt. |
 | `Get-FileProject` / `Get-ProjectRoutes` / `Resolve-ProjectTarget` | Legacy-Routing über eine `project`-Regexgruppe; in der aktuellen Konfiguration ungenutzt (nicht zu verwechseln mit der Präfix/Suffix-Whitelist in `project-routes.txt`, die trotz des Dateinamens ein eigenständiger Mechanismus ist). |
 | `Get-FilePraefixSuffix -File <FileInfo> -Rules <array>` | Extrahiert `praefix`/`suffix` aus dem ersten Regel-Treffer mit beiden benannten Gruppen. |
-| `Get-FileInitials -File <FileInfo> -Rules <array>` | Extrahiert die `initials`-Gruppe (Schüler-Kürzel), analog zur .NET-Match-Technik von `Get-TargetFileName`. |
-| `Test-DocFlowPraefixSuffixKnown -Registry <hashtable> -Praefix <string> -Suffix <string>` | Prüft Präfix **und** Suffix gegen die geladene Whitelist (`Get-PraefixSuffixRegistry`). Kernstück der Präfix/Suffix-Whitelist (siehe [Configuration.md](Configuration.md#projectroutesfile-optional)). |
+| `Get-FileInitialsFromName -Name <string> -Rules <array>` | Extrahiert die `initials`-Gruppe (Schüler-Kürzel) aus einem Dateinamen (ohne Endung) anhand des ersten Regel-Treffers mit dieser Gruppe (per `[regex]::Match`, nicht `-match`/`$Matches`, analog zu `Get-TargetFileName`). Kernfunktion, von `Get-FileInitials` (Vorwärtslauf) und `Copy-ReviewedFiles` (Rücklauf, auf den vom `_k-...`-Marker befreiten Namen angewendet) gemeinsam genutzt. |
+| `Get-FileInitials -File <FileInfo> -Rules <array>` | Dünner Wrapper um `Get-FileInitialsFromName` für den `FileInfo`-Fall. |
+| `Test-DocFlowPraefixSuffixKnown -Registry <hashtable> -Praefix <string> -Suffix <string>` | Prüft Präfix **und** Suffix gegen die geladene Whitelist (`Get-PraefixSuffixRegistry`). Kernstück der Präfix/Suffix-Whitelist (siehe [Configuration.md](Configuration.md)). |
 | `Get-PraefixSuffixRegistry -Path <string>` | Lädt `project-routes.txt` in zwei `HashSet[string]` (`Praefixe`, `Suffixe`, case-insensitive). |
+| `Sync-ProjectRoutesFromSeed -SeedPath <string> -TargetPath <string>` | Gleicht die versionierte Seed-Whitelist (`projectRoutesSeedFile`) additiv gegen die tatsächlich genutzte Whitelist (`projectRoutesFile`) ab: legt `TargetPath` an, falls er fehlt, ergänzt sonst nur dort fehlende Zeilen aus `SeedPath`. No-op, falls beide Pfade identisch sind oder `SeedPath` fehlt. |
 | `Write-NamingConventionHint -File <FileInfo> -HintConfig <hashtable> [-PraefixSuffix <PSCustomObject>]` | Erzeugt die individuelle Hinweisdatei `<Dateiname><fileNameSuffix>` neben der betroffenen Datei (keine Wirkung, falls die Datei schon existiert). `-PraefixSuffix` optional, damit die Meldung `{praefix}`/`{suffix}` referenzieren kann. |
 
 ## `CopyForward.ps1` - Quell-Scan und Vorwärtskopie
@@ -76,7 +78,7 @@ Alle unten aufgeführten Funktionen sind über `Export-ModuleMember` öffentlich
 |---|---|
 | `Get-KuerzelRoutes -Path <string>` | Lädt `kuerzel-routes.txt` in eine `Hashtable` (Kürzel → Schülerordner-Pfad, case-insensitive). |
 | `Register-Kuerzel -Routes <hashtable> [-RoutesFilePath <string>] -Kuerzel <string> -SourcePath <string>` | Trägt ein neues Kürzel einmalig ein (in-memory + Datei), no-op falls schon bekannt. Wird aus `Copy-NewFiles` heraus mit `$item.DirectoryName` aufgerufen (nicht der Quellwurzel - wichtig bei einem gemeinsamen, rekursiv gescannten Austauschordner mit Schüler-Unterordnern). |
-| `Copy-ReviewedFiles -AufgabenRoot <string> -ReviewMarker <hashtable> -KuerzelRoutes <hashtable> -State <hashtable> [-UnknownKuerzelHint <hashtable>]` | Durchsucht `aufgabenRoot` rekursiv nach `_k-<kuerzel>`-markierten Dateien, kopiert sie nach `<Schülerordner>/<Korrigiert>/`, überspringt bereits zurückkopierte Dateien (State) und Dateien, die bereits im `Korrigiert`-Ordner selbst liegen. |
+| `Copy-ReviewedFiles -AufgabenRoot <string> -ReviewMarker <hashtable> -KuerzelRoutes <hashtable> -State <hashtable> -Rules <array> [-UnknownKuerzelHint <hashtable>]` | Durchsucht `aufgabenRoot` rekursiv nach `_k-...`-markierten Dateien. Der Marker-Text selbst wird nirgends ausgewertet - stattdessen entfernt die Funktion den Marker sowie ein führendes `{date}_` und ermittelt über `Get-FileInitialsFromName -Rules $Rules` das Schüler-Kürzel aus dem verbleibenden (unveränderten) Dateinamen. Schlägt dieses Kürzel in `KuerzelRoutes` nach, kopiert nach `<Schülerordner>/<Korrigiert>/`. Überspringt bereits zurückkopierte Dateien (State) und Dateien, die bereits im `Korrigiert`-Ordner selbst liegen. |
 
 ## Aufrufreihenfolge in `Invoke-DocFlowEngine`
 
@@ -85,6 +87,7 @@ Load-Config
   → Lock-DocFlowRun (falls lockFile konfiguriert und nicht -DryRun)
     → Ensure-TargetDirectories
     → Load-State
+    → Sync-ProjectRoutesFromSeed (falls projectRoutesFile + projectRoutesSeedFile konfiguriert)
     → Get-PraefixSuffixRegistry (falls projectRoutesFile konfiguriert)
     → Get-KuerzelRoutes (falls reviewMarker.kuerzelRoutesFile konfiguriert)
     → Copy-NewFiles           (Vorwärtslauf, inkl. Register-Kuerzel bei Bedarf)

@@ -1,8 +1,3 @@
-# Lock-Mechanismus für den Multi-Machine-Betrieb (siehe MULTI-MACHINE-SETUP.md,
-# Baustein 3). Verhindert, dass zwei Rechner gleichzeitig in dieselbe geteilte
-# State-/Registry-Datei schreiben. Bewusst nur mit PowerShell-5.1-Bordmitteln
-# umgesetzt (Test-Path/Get-Content/Set-Content/Remove-Item), kein Mutex.
-
 function Test-DocFlowLockFresh {
     [CmdletBinding()]
     param(
@@ -14,10 +9,6 @@ function Test-DocFlowLockFresh {
         return $false
     }
 
-    # -Force nötig, da Dateien mit führendem Punkt (wie ".docflow-lock") auf
-    # macOS/Linux von PowerShells FileSystem-Provider standardmäßig als
-    # versteckt gelten und von Get-Item sonst nicht gefunden werden, obwohl
-    # Test-Path sie sieht.
     $age = (Get-Date) - (Get-Item -Path $LockPath -Force).LastWriteTime
     return ($age.TotalMinutes -lt $TimeoutMinutes)
 }

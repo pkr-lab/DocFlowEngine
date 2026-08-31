@@ -1,11 +1,3 @@
-# "Korrigiert"-Rücklauf (siehe ERWEITERUNGSKONZEPT.md, Abschnitt 2b): Wenn ein
-# Ausbilder im aufgabenRoot-Baum eine geprüfte Datei mit einem Kürzel-Suffix
-# (z. B. "_k-pke") umbenennt, kopiert DocFlowEngine sie in
-# <Schülerordner>/<korrigiertFolderName>/ zurück. Die Zuordnung Kürzel ->
-# Schülerordner steht in einer automatisch geführten Registry (kuerzel-routes.txt,
-# gleiches Format wie project-routes.txt), die beim normalen Vorwärtslauf
-# (Copy-NewFiles/Register-Kuerzel) einmalig pro Kürzel befüllt wird.
-
 function Get-KuerzelRoutes {
     [CmdletBinding()]
     param(
@@ -79,6 +71,7 @@ function Copy-ReviewedFiles {
         [Parameter(Mandatory)] [hashtable]$ReviewMarker,
         [Parameter(Mandatory)] [hashtable]$KuerzelRoutes,
         [Parameter(Mandatory)] [hashtable]$State,
+        [Parameter(Mandatory)] [array]$Rules,
         [hashtable]$UnknownKuerzelHint = $null
     )
 
@@ -99,8 +92,6 @@ function Copy-ReviewedFiles {
     $items = Get-ChildItem -Path $AufgabenRoot -File -Recurse -ErrorAction SilentlyContinue
 
     foreach ($item in $items) {
-        # Bereits zurückkopierte Dateien im Korrigiert-Ordner selbst nicht
-        # erneut als "zu prüfende" Datei behandeln.
         if (Test-DocFlowInsideNamedFolder -DirectoryName $item.DirectoryName -FolderName $korrigiertFolderName) {
             continue
         }
@@ -116,14 +107,47 @@ function Copy-ReviewedFiles {
             continue
         }
 
-        $kuerzel = $markerMatch.Groups['kuerzel'].Value.ToLowerInvariant()
-        if (-not $KuerzelRoutes.ContainsKey($kuerzel)) {
-            Write-Log -Level Warning -Message "Unbekanntes Kürzel '$kuerzel' in '$($item.Name)' - kein Schülerordner bekannt, Rückkopie übersprungen."
+        $originalStem = $nameWithoutExtension.Substring(0, $markerMatch.Index) -replace '^\d{8}_', ''
+        $kuerzel = Get-FileInitialsFromName -Name $originalStem -Rules $Rules
+
+        if ($kuerzel -and $KuerzelRoutes.ContainsKey($kuerzel.ToLowerInvariant())) {
+            $studentFolder = $KuerzelRoutes[$kuerzel.ToLowerInvariant()]
+            $korrigiertFolder = Join-Path $studentFolder $korrigiertFolderName
+
+            if (-not (Test-Path $korrigiertFolder)) {
+                if ($Script:DryRun) {
+                    Write-Log -Level Info -Message "[DryRun] Verzeichnis würde erstellt: $korrigiertFolder"
+                } else {
+                    New-Item -ItemType Directory -Path $korrigiertFolder -Force | Out-Null
+                }
+            }
+
+            $destinationPath = Join-Path $korrigiertFolder $item.Name
+
+            if ($Script:DryRun) {
+                Write-Log -Level Info -Message "[DryRun] Korrigierte Datei würde zurückkopiert: '$($item.FullName)' -> '$destinationPath'"
+            } else {
+                Write-Log -Level Info -Message "Kopiere korrigierte Datei zurück: '$($item.FullName)' -> '$destinationPath'"
+                Copy-Item -Path $item.FullName -Destination $destinationPath -Force
+            }
+
+            $State.reviewedFiles[$reviewKey] = [ordered]@{
+                source = $item.FullName
+                target = $destinationPath
+                kuerzel = $kuerzel.ToLowerInvariant()
+                processedAt = (Get-Date).ToString('o')
+            }
+        } else {
+            Write-Log -Level Warning -Message "Kein Schülerordner für '$($item.Name)' ermittelbar (erkanntes Kürzel aus dem Dateinamen: '$kuerzel') - Rückkopie übersprungen."
 
             if ($UnknownKuerzelHint -and $UnknownKuerzelHint.enabled) {
                 $hintPath = Join-Path $item.DirectoryName "$($item.Name).KUERZEL-UNBEKANNT.txt"
                 if (-not (Test-Path $hintPath)) {
-                    $message = Expand-Template -Template $UnknownKuerzelHint.message -Context ([ordered]@{ fileName = $item.Name; kuerzel = $kuerzel })
+                    $context = [ordered]@{
+                        fileName = $item.Name
+                        kuerzel = if ($kuerzel) { $kuerzel } else { '' }
+                    }
+                    $message = Expand-Template -Template $UnknownKuerzelHint.message -Context $context
                     if ($Script:DryRun) {
                         Write-Log -Level Info -Message "[DryRun] Hinweis-Datei würde erstellt: '$hintPath'"
                     } else {
@@ -131,35 +155,6 @@ function Copy-ReviewedFiles {
                     }
                 }
             }
-
-            continue
-        }
-
-        $studentFolder = $KuerzelRoutes[$kuerzel]
-        $korrigiertFolder = Join-Path $studentFolder $korrigiertFolderName
-
-        if (-not (Test-Path $korrigiertFolder)) {
-            if ($Script:DryRun) {
-                Write-Log -Level Info -Message "[DryRun] Verzeichnis würde erstellt: $korrigiertFolder"
-            } else {
-                New-Item -ItemType Directory -Path $korrigiertFolder -Force | Out-Null
-            }
-        }
-
-        $destinationPath = Join-Path $korrigiertFolder $item.Name
-
-        if ($Script:DryRun) {
-            Write-Log -Level Info -Message "[DryRun] Korrigierte Datei würde zurückkopiert: '$($item.FullName)' -> '$destinationPath'"
-        } else {
-            Write-Log -Level Info -Message "Kopiere korrigierte Datei zurück: '$($item.FullName)' -> '$destinationPath'"
-            Copy-Item -Path $item.FullName -Destination $destinationPath -Force
-        }
-
-        $State.reviewedFiles[$reviewKey] = [ordered]@{
-            source = $item.FullName
-            target = $destinationPath
-            kuerzel = $kuerzel
-            processedAt = (Get-Date).ToString('o')
         }
     }
 }
