@@ -16,12 +16,6 @@ function Get-TargetFileName {
     }
 
     foreach ($rule in $Rules) {
-        # Direkt mit [regex]::Match statt dem -match-Operator/$Matches: Ein
-        # .NET Group-Objekt liefert für eine nicht mitgematchte optionale Gruppe
-        # (z. B. "versiontag" ohne Versionsangabe) garantiert .Value = '' -
-        # unabhängig davon, ob $Matches für diese Gruppe überhaupt einen
-        # Schlüssel anlegt. Damit bleibt kein Platzhalter wie "{versiontag}"
-        # unersetzt im Dateinamen stehen.
         $regex = [regex]::new($rule.match)
         $regexMatch = $regex.Match($originalName)
         if ($regexMatch.Success) {
@@ -135,20 +129,16 @@ function Get-FilePraefixSuffix {
     return $null
 }
 
-function Get-FileInitials {
+function Get-FileInitialsFromName {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)] [System.IO.FileInfo]$File,
+        [Parameter(Mandatory)] [string]$Name,
         [Parameter(Mandatory)] [array]$Rules
     )
 
-    $originalName = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
-
     foreach ($rule in $Rules) {
-        # Wie bei Get-TargetFileName: [regex]::Match statt -match/$Matches, damit
-        # eine vorhandene, aber nicht benannte "initials"-Gruppe zuverlässig erkannt wird.
         $regex = [regex]::new($rule.match)
-        $regexMatch = $regex.Match($originalName)
+        $regexMatch = $regex.Match($Name)
         if ($regexMatch.Success -and $regexMatch.Groups['initials'].Success) {
             return $regexMatch.Groups['initials'].Value
         }
@@ -157,15 +147,22 @@ function Get-FileInitials {
     return $null
 }
 
+function Get-FileInitials {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [System.IO.FileInfo]$File,
+        [Parameter(Mandatory)] [array]$Rules
+    )
+
+    $originalName = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
+    return Get-FileInitialsFromName -Name $originalName -Rules $Rules
+}
+
 function Write-NamingConventionHint {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [System.IO.FileInfo]$File,
         [Parameter(Mandatory)] [hashtable]$HintConfig,
-        # Optional: bereits erkanntes, aber unbekanntes Präfix/Suffix (siehe
-        # Test-DocFlowPraefixSuffixKnown), damit die Hinweismeldung bei Bedarf
-        # {praefix}/{suffix} referenzieren kann, statt nur allgemein auf das
-        # Namensschema zu verweisen.
         [PSCustomObject]$PraefixSuffix = $null
     )
 
@@ -173,10 +170,6 @@ function Write-NamingConventionHint {
         return
     }
 
-    # Pro-Datei-Hinweis statt einer geteilten Ordner-Hinweisdatei: so bleibt
-    # erkennbar, welche konkrete Datei betroffen ist, und ein neuer Fehler in
-    # einem Ordner mit bereits vorhandenem Hinweis wird nicht mehr verschluckt
-    # (siehe ERWEITERUNGSKONZEPT.md, Abschnitt 2a).
     $hintFileName = "$($File.Name)$($HintConfig.fileNameSuffix)"
     $hintPath = Join-Path $File.DirectoryName $hintFileName
     if (Test-Path $hintPath) {
@@ -243,6 +236,67 @@ function Get-PraefixSuffixRegistry {
     return $registry
 }
 
+function Sync-ProjectRoutesFromSeed {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$SeedPath,
+        [Parameter(Mandatory)] [string]$TargetPath
+    )
+
+    if ($SeedPath.Equals($TargetPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return
+    }
+
+    if (-not (Test-Path $SeedPath)) {
+        Write-Log -Level Warning -Message "Whitelist-Startbestand '$SeedPath' wurde nicht gefunden. Synchronisierung übersprungen."
+        return
+    }
+
+    if (-not (Test-Path $TargetPath)) {
+        $targetDirectory = Split-Path -Path $TargetPath -Parent
+        if ($targetDirectory -and -not (Test-Path $targetDirectory)) {
+            if ($Script:DryRun) {
+                Write-Log -Level Info -Message "[DryRun] Verzeichnis würde erstellt: $targetDirectory"
+            } else {
+                New-Item -ItemType Directory -Path $targetDirectory -Force | Out-Null
+            }
+        }
+
+        if ($Script:DryRun) {
+            Write-Log -Level Info -Message "[DryRun] Whitelist-Datei würde aus Startbestand erstellt: '$TargetPath' (aus '$SeedPath')"
+        } else {
+            Copy-Item -Path $SeedPath -Destination $TargetPath -Force
+            Write-Log -Level Info -Message "Whitelist-Datei aus Startbestand erstellt: '$TargetPath' (aus '$SeedPath')"
+        }
+
+        return
+    }
+
+    $existingLines = [System.Collections.Generic.HashSet[string]]::new([string[]](Get-Content -Path $TargetPath), [System.StringComparer]::OrdinalIgnoreCase)
+    $missingLines = @()
+
+    foreach ($line in Get-Content -Path $SeedPath) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith('#') -or $existingLines.Contains($trimmed)) {
+            continue
+        }
+
+        $missingLines += $trimmed
+        [void]$existingLines.Add($trimmed)
+    }
+
+    if ($missingLines.Count -eq 0) {
+        return
+    }
+
+    if ($Script:DryRun) {
+        Write-Log -Level Info -Message "[DryRun] Whitelist-Datei '$TargetPath' würde um Eintraege aus Startbestand ergänzt: $($missingLines -join ', ')"
+    } else {
+        Add-Content -Path $TargetPath -Value $missingLines
+        Write-Log -Level Info -Message "Whitelist-Datei '$TargetPath' um Eintraege aus Startbestand ergänzt: $($missingLines -join ', ')"
+    }
+}
+
 function Test-DocFlowPraefixSuffixKnown {
     [CmdletBinding()]
     param(
@@ -251,10 +305,6 @@ function Test-DocFlowPraefixSuffixKnown {
         [Parameter(Mandatory)] [string]$Suffix
     )
 
-    # Präfix und Suffix gelten nur als bekannt, wenn beide bereits einzeln in der
-    # (statisch gepflegten, siehe config/project-routes.txt) Registry stehen. Neue
-    # Werte werden nicht mehr automatisch aufgenommen - eine unbekannte Kombination
-    # ist ein Namenskonvention-Fehler (siehe Copy-NewFiles/Write-NamingConventionHint).
     if (-not $Registry -or -not $Registry.Praefixe -or -not $Registry.Suffixe) {
         return $false
     }

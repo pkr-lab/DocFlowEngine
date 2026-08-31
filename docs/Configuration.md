@@ -109,13 +109,13 @@ existiert die Hinweisdatei schon, wird sie nicht erneut geschrieben.
 ## `reviewMarker` (optional, Default: deaktiviert)
 
 Steuert den "Korrigiert"-Rücklauf: Ein Ausbilder benennt eine geprüfte Datei unterhalb
-`aufgabenRoot` um und hängt `_k-<kürzel>` an; DocFlowEngine kopiert sie daraufhin in
+`aufgabenRoot` um und hängt `_k-<beliebiger Text>` an; DocFlowEngine kopiert sie daraufhin in
 `<Schülerordner>/<korrigiertFolderName>/` zurück.
 
 ```powershell
 reviewMarker = @{
     enabled              = $true
-    pattern              = '_k-(?<kuerzel>[A-Za-z]{3})$'
+    pattern              = '_k-[A-Za-z0-9]+$'
     korrigiertFolderName = 'Korrigiert'
     kuerzelRoutesFile    = 'C:/Users/p0*/OneDrive - D*/.../_DocFlowEngine-Shared/kuerzel-routes.txt'
 }
@@ -124,45 +124,63 @@ reviewMarker = @{
 | Feld | Default | Beschreibung |
 |---|---|---|
 | `enabled` | `$false` | Muss explizit gesetzt werden, um den Rücklauf zu aktivieren. |
-| `pattern` | `_k-(?<kuerzel>[A-Za-z]{3})$` | Regex mit Pflichtgruppe `kuerzel`, geprüft gegen den Dateinamen ohne Endung. |
+| `pattern` | `_k-[A-Za-z0-9]+$` | Regex, geprüft gegen den Dateinamen ohne Endung. Erkennt nur, **dass** die Datei als Korrektur markiert ist - der getroffene Text selbst wird nirgends ausgewertet (siehe unten). |
 | `korrigiertFolderName` | `Korrigiert` | Name des Zielunterordners im Schülerordner. |
-| `kuerzelRoutesFile` | `./config/kuerzel-routes.txt` | Pfad zur Kürzel→Schülerordner-Registry. Wird **automatisch** befüllt (siehe unten) - Formatbeispiel: `config/kuerzel-routes.example.txt`. |
+| `kuerzelRoutesFile` | `./config/kuerzel-routes.txt` | Pfad zur Kürzel→Schülerordner-Registry. Wird **automatisch** befüllt (siehe unten). Format: eine Zeile pro Kürzel, `kuerzel=<absoluter Pfad zum Schülerordner>` (z. B. `pke=C:\Users\p0kretzer\OneDrive - D...\SchuelerMaterial\Max Mustermann`), `#` für Kommentare. |
 
-Die Zuordnung Kürzel → Schülerordner entsteht automatisch beim normalen Hochladen: Sobald
-`Copy-NewFiles` eine Aufgabendatei mit bekanntem Präfix/Suffix verarbeitet, registriert
+**Der Text nach `_k-` hat keinen Einfluss auf das Zielverzeichnis** - er dient nur als
+Erkennungsmerkmal dafür, dass die Datei fertig geprüft ist, und kann frei gewählt werden (z. B. das
+Kürzel des Ausbilders statt des Schülers). Maßgeblich für den Zielordner ist stattdessen das
+Schüler-Kürzel, das bereits vorne im (unveränderten) Dateinamen steht: DocFlowEngine entfernt den
+`_k-...`-Marker sowie ein vorangestelltes `{date}_` und wendet auf den Rest dieselben
+`namingConventions`-Regeln an wie beim Hochladen (`Get-FileInitialsFromName`, `Naming.ps1`), um die
+`initials`-Gruppe (das Schüler-Kürzel) zu ermitteln. Dieses Kürzel wird gegen `kuerzelRoutesFile`
+nachgeschlagen. Die Zuordnung Kürzel → Schülerordner entsteht automatisch beim normalen Hochladen:
+Sobald `Copy-NewFiles` eine Aufgabendatei mit bekanntem Präfix/Suffix verarbeitet, registriert
 `Register-Kuerzel` (`CopyBack.ps1`) einmalig den unmittelbaren Ordner dieser Datei unter dem
-extrahierten Kürzel (`initials`-Gruppe aus `namingConventions`). Kein manueller Pflegeaufwand.
+extrahierten Kürzel. Kein manueller Pflegeaufwand.
 
 ## `unknownKuerzelHint` (optional, Default siehe unten)
 
-Hinweisdatei, falls beim Korrigiert-Rücklauf ein Kürzel auftaucht, das noch keinem Schülerordner
-zugeordnet werden konnte.
+Hinweisdatei, falls beim Korrigiert-Rücklauf für das aus dem Dateinamen ermittelte Kürzel (noch)
+kein Schülerordner bekannt ist.
 
 ```powershell
 unknownKuerzelHint = @{
     enabled = $true
-    message = 'Die Datei "{fileName}" wurde mit dem Kürzel "{kuerzel}" markiert, ...'
+    message = 'Die Datei "{fileName}" ist als Korrektur markiert, aber für das im Dateinamen erkannte Kürzel "{kuerzel}" ist noch kein Schülerordner bekannt. ...'
 }
 ```
 
 Erzeugt `<Dateiname>.KUERZEL-UNBEKANNT.txt` neben der betroffenen Datei. Platzhalter: `{fileName}`,
-`{kuerzel}`.
+`{kuerzel}` (das aus dem Dateinamen ermittelte Kürzel, leer, falls es sich gar nicht bestimmen ließ).
 
-## `projectRoutesFile` (optional)
+## `projectRoutesFile` / `projectRoutesSeedFile` (optional)
 
 ```powershell
-projectRoutesFile = 'C:/Users/p0*/OneDrive - D*/.../_DocFlowEngine-Shared/project-routes.txt'
+projectRoutesFile     = 'C:/Users/p0*/OneDrive - D*/.../_DocFlowEngine-Shared/project-routes.txt'
+projectRoutesSeedFile = './config/project-routes.txt'
 ```
 
-Pfad zur **Whitelist** bekannter Präfixe/Suffixe (Format: `praefix=<Name>` / `suffix=<Name>`, eine
-Zeile pro Eintrag, `#` für Kommentare - Beispiel: `config/project-routes.txt`). Nur wenn **sowohl**
-Präfix **als auch** Suffix einer Datei hier bereits gelistet sind, wird sie nach `aufgabenRoot`
-geroutet (`Test-DocFlowPraefixSuffixKnown`, `Naming.ps1`). Ein unbekannter Wert wird **nicht**
-automatisch aufgenommen, sondern wie eine falsche Namenskonvention behandelt (siehe
-`namingConventionHint` oben) - neue Fächer/Themen müssen von Hand in der Datei ergänzt werden.
+`projectRoutesFile` ist die zur Laufzeit **tatsächlich genutzte** Whitelist bekannter Präfixe/Suffixe
+(Format: `praefix=<Name>` / `suffix=<Name>`, eine Zeile pro Eintrag, `#` für Kommentare). Nur wenn
+**sowohl** Präfix **als auch** Suffix einer Datei hier bereits gelistet sind, wird sie nach
+`aufgabenRoot` geroutet (`Test-DocFlowPraefixSuffixKnown`, `Naming.ps1`). Ein unbekannter Wert wird
+**nicht** automatisch aufgenommen, sondern wie eine falsche Namenskonvention behandelt (siehe
+`namingConventionHint` oben).
 
-**Ist `projectRoutesFile` gar nicht gesetzt**, entfällt die Whitelist-Prüfung komplett: Jeder
-syntaktisch zum Schema passende Präfix/Suffix wird akzeptiert (altes, offenes Verhalten).
+`projectRoutesSeedFile` (Default `./config/project-routes.txt`) ist der versionierte Startbestand im
+Repo. Neue Fächer/Themen werden von Hand **in dieser Seed-Datei** ergänzt und eingecheckt - bei
+jedem Lauf gleicht `Sync-ProjectRoutesFromSeed` (`Naming.ps1`) sie gegen `projectRoutesFile` ab:
+Existiert `projectRoutesFile` noch nicht, wird es 1:1 aus der Seed-Datei angelegt; existiert es
+bereits, werden nur dort fehlende Zeilen aus der Seed-Datei ergänzt (rein additiv - Zeilen, die nur
+in `projectRoutesFile` stehen, bleiben unangetastet). Ein manuelles Kopieren auf den geteilten
+Ordner ist damit nicht mehr nötig. Zeigen beide Felder auf denselben Pfad (Einzelrechner-Betrieb
+ohne geteilten Ordner), findet keine Synchronisierung statt.
+
+**Ist `projectRoutesFile` gar nicht gesetzt**, entfällt die Whitelist-Prüfung komplett (und damit
+auch die Seed-Synchronisierung): Jeder syntaktisch zum Schema passende Präfix/Suffix wird akzeptiert
+(altes, offenes Verhalten).
 
 ## `defaultNameFormat` (optional)
 
@@ -173,7 +191,7 @@ defaultNameFormat = '{date}_{originalName}'
 Fallback-Template, wenn keine `namingConventions`-Regel passt. `{date}_{originalName}` (statt
 `{timestamp}_{originalName}`) ist für Multi-Machine-Betrieb empfohlen: `{timestamp}` erzeugt bei
 jedem Lauf einen neuen, nicht wiedererkennbaren Namen und verhindert damit den
-Ziel-Existenz-Check (siehe [MULTI-MACHINE-SETUP.md](../MULTI-MACHINE-SETUP.md)).
+Ziel-Existenz-Check (siehe [MULTI-MACHINE-SETUP.md](Konzepte/MULTI-MACHINE-SETUP.md)).
 
 ## `stateFile` (optional, Default `./.docflow-state.json`)
 

@@ -47,8 +47,7 @@ sudo apt-get install -y powershell
 ## Dateien
 
 - `config/docflow-config.psd1` - PowerShell-Data-Konfiguration mit Quellen, Zielen und Umbenennungsregeln
-- `config/project-routes.txt` - Startbestand/Beispiel der Präfix/Suffix-Whitelist, von Hand gepflegt (Laufzeit-Kopie liegt im geteilten Ordner, siehe [MULTI-MACHINE-SETUP.md](MULTI-MACHINE-SETUP.md))
-- `config/kuerzel-routes.example.txt` - Formatbeispiel für die Kürzel-Registry des "Korrigiert"-Rücklaufs (siehe [ERWEITERUNGSKONZEPT.md](ERWEITERUNGSKONZEPT.md))
+- `config/project-routes.txt` - Startbestand der Präfix/Suffix-Whitelist, von Hand gepflegt und versioniert. Wird bei jedem Lauf automatisch in die geteilte Laufzeit-Kopie synchronisiert (siehe [docs/Konzepte/MULTI-MACHINE-SETUP.md](docs/Konzepte/MULTI-MACHINE-SETUP.md))
 - `scripts/DocFlowEngine.ps1` - Skript-Wrapper, der das modulare `DocFlowEngine.psm1` ausführt
 - `scripts/DocFlowEngine.psm1` - Root-Modul: bindet die Teilmodule unten ein und stellt `Invoke-DocFlowEngine` bereit
 - `scripts/DocFlowEngine/Common.ps1` - Logging, Pfadauflösung, generische Hilfsfunktionen
@@ -120,9 +119,6 @@ C:/Users/p0*/OneDrive - D*/SharePoint/
         }
     )
 
-    # Nur Dateien mit einem hier bereits gelisteten Praefix UND Suffix werden
-    # geroutet (siehe config/project-routes.txt: "praefix=Java" / "suffix=Arrays").
-    # Unbekannte Werte gelten als Namenskonvention-Fehler, siehe unten.
     projectRoutesFile = './config/project-routes.txt'
 
     defaultNameFormat = '{timestamp}_{originalName}'
@@ -182,10 +178,13 @@ C:/Users/p0*/OneDrive - D*/SharePoint/SchuelerMaterial/
 ```
 
 `Java` und `Arrays` mussten dafür bereits vorab in `config/project-routes.txt` stehen
-(`praefix=Java` / `suffix=Arrays`) - DocFlowEngine ergänzt diese Datei **nicht** mehr automatisch
-um neue Werte. Ein Präfix oder Suffix, der dort noch nicht gelistet ist, wird wie eine falsche
-Namenskonvention behandelt (siehe nächster Abschnitt). Neue Fächer/Themen müssen von Hand in
-`project-routes.txt` ergänzt werden.
+(`praefix=Java` / `suffix=Arrays`). Ein Präfix oder Suffix, der dort nicht gelistet ist, wird wie
+eine falsche Namenskonvention behandelt (siehe nächster Abschnitt). Neue Fächer/Themen werden von
+Hand in `config/project-routes.txt` ergänzt (dem versionierten Startbestand im Repo) - DocFlowEngine
+kopiert diese Datei bei jedem Lauf automatisch in die unter `projectRoutesFile` konfigurierte,
+tatsächlich genutzte Kopie (legt sie beim ersten Mal an, ergänzt bei jedem weiteren Lauf neue
+Zeilen aus dem Startbestand). Ein manuelles Kopieren ist nicht mehr nötig; siehe `projectRoutesSeedFile` in
+[docs/Configuration.md](docs/Configuration.md).
 
 **Wiederholte Ausführung:** Beim nächsten Lauf werden diese Dateien nicht erneut kopiert, da sie in `.docflow-state.json` gespeichert sind. Bereits sortierte Dateien unterhalb von `targets`/`aufgabenRoot` werden beim Scannen der Quelle automatisch ausgeschlossen, auch wenn Quell- und Zielordner denselben übergeordneten Pfad teilen.
 
@@ -195,7 +194,7 @@ Namenskonvention behandelt (siehe nächster Abschnitt). Neue Fächer/Themen müs
 
 In beiden Fällen legt DocFlowEngine direkt neben der Datei einen individuellen Hinweis an (`<Dateiname>.NAMENSKONVENTION-FEHLER.txt`, optional mit `{praefix}`/`{suffix}` in der Meldung), damit bei mehreren betroffenen Dateien im selben Ordner erkennbar bleibt, welche gemeint ist und woran es liegt.
 
-**"Korrigiert"-Rücklauf:** Benennt ein Ausbilder eine geprüfte Datei unterhalb von `aufgabenRoot` um und hängt `_k-<kürzel>` an (z. B. `20260625_pke_Java_Arrays_abc_k-pke.pdf`), kopiert DocFlowEngine sie beim nächsten Lauf automatisch in einen `Korrigiert`-Unterordner im ursprünglichen Schülerordner zurück (Original bleibt erhalten). Die Zuordnung Kürzel → Schülerordner wird dafür automatisch beim regulären Hochladen mitgeführt (`reviewMarker.kuerzelRoutesFile`). Ist ein Kürzel noch unbekannt, legt DocFlowEngine `<Dateiname>.KUERZEL-UNBEKANNT.txt` an, statt die Datei stillschweigend zu überspringen. Details und Designentscheidungen: [ERWEITERUNGSKONZEPT.md](ERWEITERUNGSKONZEPT.md).
+**"Korrigiert"-Rücklauf:** Benennt ein Ausbilder eine geprüfte Datei unterhalb von `aufgabenRoot` um und hängt `_k-<beliebiger Text>` an (z. B. `20260625_pke_Java_Arrays_abc_k-ml.pdf` oder auch `..._k-abc.pdf`), kopiert DocFlowEngine sie beim nächsten Lauf automatisch in einen `Korrigiert`-Unterordner im ursprünglichen Schülerordner zurück (Original bleibt erhalten). Der Text nach `_k-` selbst hat **keinen** Einfluss darauf, wohin kopiert wird - er ist nur das Erkennungsmerkmal für "diese Datei ist korrigiert" und kann frei gewählt werden (z. B. das Kürzel des Ausbilders). Maßgeblich für den Zielordner ist stattdessen das Schüler-Kürzel, das bereits vorne im (unveränderten) Dateinamen steht (`pke` im Beispiel) - dieselben Initialen, die beim ursprünglichen Hochladen bereits die Zuordnung Kürzel → Schülerordner in `reviewMarker.kuerzelRoutesFile` angelegt haben. Kann DocFlowEngine dafür keinen Schülerordner ermitteln, legt es `<Dateiname>.KUERZEL-UNBEKANNT.txt` an, statt die Datei stillschweigend zu überspringen. Details und Designentscheidungen: [docs/Konzepte/ERWEITERUNGSKONZEPT.md](docs/Konzepte/ERWEITERUNGSKONZEPT.md).
 
 ### Regelmäßige Automatisierung
 
@@ -226,7 +225,7 @@ crontab -e
 | `.docflow-state.json` gelöscht | Beim nächsten Lauf wird eine neue Zustandsdatei erstellt; Dateien können dann erneut kopiert werden |
 | Keine Schreibrechte im Zielordner | Prüfe Ordnerberechtigungen; DocFlowEngine benötigt nur Schreibrechte im Zielordner, nicht im Quellordner |
 | `Lauf abgebrochen: aktive Lock-Datei ... gefunden` | Ein anderer Rechner läuft gerade (oder ein vorheriger Lauf ist abgestürzt und die Lock-Datei ist noch "frisch", siehe `lockTimeoutMinutes`). Nach Ablauf des Timeouts übernimmt der nächste Lauf automatisch; die Lock-Datei kann bei Bedarf auch manuell gelöscht werden |
-| Dateien werden auf mehreren Rechnern doppelt kopiert | Siehe [MULTI-MACHINE-SETUP.md](MULTI-MACHINE-SETUP.md) - `stateFile`/`projectRoutesFile`/`lockFile` müssen auf einen geteilten Ordner zeigen, nicht auf lokale Pfade |
+| Dateien werden auf mehreren Rechnern doppelt kopiert | Siehe [docs/Konzepte/MULTI-MACHINE-SETUP.md](docs/Konzepte/MULTI-MACHINE-SETUP.md) - `stateFile`/`projectRoutesFile`/`lockFile` müssen auf einen geteilten Ordner zeigen, nicht auf lokale Pfade |
 
 ## Dokumentation
 
@@ -240,13 +239,13 @@ Detail-Dokumentation liegt unter [`docs/`](docs/README.md), aufgeteilt nach Them
 
 Konzeptdokumente (Repo-Root):
 
-- [MULTI-MACHINE-SETUP.md](MULTI-MACHINE-SETUP.md) - DocFlowEngine auf mehreren Rechnern betreiben (geteilter Ordner, Lock-Datei, deterministische Benennung)
-- [ERWEITERUNGSKONZEPT.md](ERWEITERUNGSKONZEPT.md) - Konzept und Umsetzung der Pro-Datei-Namenskonvention-Hinweise, des "Korrigiert"-Rücklaufs, der Präfix/Suffix-Whitelist und der Modularisierung
+- [docs/Konzepte/MULTI-MACHINE-SETUP.md](docs/Konzepte/MULTI-MACHINE-SETUP.md) - DocFlowEngine auf mehreren Rechnern betreiben (geteilter Ordner, Lock-Datei, deterministische Benennung)
+- [docs/Konzepte/ERWEITERUNGSKONZEPT.md](docs/Konzepte/ERWEITERUNGSKONZEPT.md) - Konzept und Umsetzung der Pro-Datei-Namenskonvention-Hinweise, des "Korrigiert"-Rücklaufs, der Präfix/Suffix-Whitelist und der Modularisierung
 
 ## Sicherheit & Admin-Rechte
 
 - **Keine Admin-Rechte erforderlich** für die Ausführung des Skripts (Details und Nachweis: [docs/Compatibility-und-Admin-Rechte.md](docs/Compatibility-und-Admin-Rechte.md))
 - `-ExecutionPolicy Bypass` gilt nur für diesen Prozess, nicht systemweit
 - Zugriffsrechte benötigt: Lesezugriff auf Quellordner, Schreibzugriff auf Zielordner
-- Zustandsdatei (`stateFile`) wird am konfigurierten Pfad gespeichert (muss schreibbar sein) - im Multi-Machine-Betrieb üblicherweise im geteilten OneDrive/SharePoint-Ordner statt im lokalen Repo-Verzeichnis, siehe [MULTI-MACHINE-SETUP.md](MULTI-MACHINE-SETUP.md)
+- Zustandsdatei (`stateFile`) wird am konfigurierten Pfad gespeichert (muss schreibbar sein) - im Multi-Machine-Betrieb üblicherweise im geteilten OneDrive/SharePoint-Ordner statt im lokalen Repo-Verzeichnis, siehe [docs/Konzepte/MULTI-MACHINE-SETUP.md](docs/Konzepte/MULTI-MACHINE-SETUP.md)
 - Log-Datei wird im konfigurierten Pfad gespeichert (Verzeichnis muss existieren oder `createIfMissing` setzen)

@@ -65,12 +65,6 @@ function Resolve-PathOrAbsolute {
     }
 
     if ($PathValue -match '[*?]') {
-        # Pfad enthält Wildcards (z. B. geräteabhängige OneDrive-Ordnernamen) und
-        # existiert als Ganzes noch nicht (z. B. weil ein Zielordner erst von
-        # DocFlowEngine angelegt wird). Wir schneiden vom Ende her Segmente ab,
-        # bis ein existierendes (ggf. ebenfalls wildcardhaltiges) Elternverzeichnis
-        # gefunden und via Resolve-Path aufgelöst werden kann, und hängen die
-        # fehlenden Segmente danach wieder literal an.
         $trailingSegments = New-Object System.Collections.Generic.List[string]
         $current = $PathValue.TrimEnd('\', '/')
 
@@ -153,10 +147,6 @@ function ConvertTo-DocFlowHashtable {
         }
 
         if ($InputObject -is [System.Management.Automation.PSCustomObject]) {
-            # Bewusst @{} statt [ordered]@{}: Eine OrderedDictionary hat kein
-            # ContainsKey (nur Contains), aber Copy-NewFiles ruft auf $State.processed
-            # gezielt .ContainsKey() auf. Eine normale Hashtable verhält sich hier
-            # wie das Original von ConvertFrom-Json -AsHashtable.
             $hash = @{}
             foreach ($property in $InputObject.PSObject.Properties) {
                 $hash[$property.Name] = ConvertTo-DocFlowHashtable -InputObject $property.Value
@@ -179,12 +169,6 @@ function Get-DocFlowRelativePath {
         [Parameter(Mandatory)] [string]$FullPath
     )
 
-    # Bewusst reine String-Verarbeitung statt [Uri]::MakeRelativeUri: Ein
-    # POSIX-Pfad wie "/tmp/..." (Linux/macOS mit PowerShell 7+) wird von .NET
-    # ohne "file://"-Schema nicht als absolute URI erkannt und würde dort eine
-    # Exception auslösen - anders als ein Windows-Pfad mit Laufwerksbuchstaben.
-    # Damit funktioniert die Funktion auf allen laut README unterstützten
-    # Plattformen gleich.
     $normalizedBase = $BasePath.TrimEnd('\', '/')
     if ($FullPath.StartsWith($normalizedBase, [System.StringComparison]::OrdinalIgnoreCase)) {
         $relative = $FullPath.Substring($normalizedBase.Length).TrimStart('\', '/')
