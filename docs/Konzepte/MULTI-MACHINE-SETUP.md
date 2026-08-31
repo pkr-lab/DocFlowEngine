@@ -20,8 +20,11 @@ Ordner. Das anfängliche Kopieren von `config/project-routes.txt` in diesen
 geteilten Ordner (Baustein 2) ist inzwischen kein manueller Schritt mehr, sondern
 läuft bei jedem Start automatisch über `Sync-ProjectRoutesFromSeed` (siehe
 [ERWEITERUNGSKONZEPT.md](ERWEITERUNGSKONZEPT.md) Abschnitt 6). Baustein 4
-(zeitversetzte Scheduled Tasks) ist eine reine Betriebs-/Deployment-Maßnahme und
-bleibt manuell einzurichten.
+(zeitversetzte Scheduled Tasks) ist eine Betriebs-/Deployment-Maßnahme, die pro
+Rechner in der Aufgabenplanung eingerichtet wird - dafür gibt es inzwischen ein
+konkretes, copy-paste-fertiges Beispiel samt Begründung im
+[README](../README.md#regelmäßige-automatisierung), inklusive `scripts/Invoke-OneDriveSync.ps1`
+als Sync-Anstoß vor dem eigentlichen Lauf (siehe Abschnitt "Baustein 4" unten).
 
 ## 1. Warum "mehrere Rechner" aktuell nicht funktioniert
 
@@ -106,8 +109,16 @@ mit reinen PS-5.1-Bordmitteln machbar (`Test-Path`, `Get-Content`, `Set-Content`
 ### Baustein 4 – Zeitversetzte Scheduled Tasks
 
 Zusätzlich zur Lock-Datei: Task Scheduler/Cron auf den Rechnern nicht auf dieselbe
-Uhrzeit legen (z. B. Rechner A um 08:00, Rechner B um 08:10), damit der
-OneDrive-Sync zwischen den Läufen realistisch Zeit hat durchzulaufen.
+Uhrzeit legen, damit der OneDrive-Sync zwischen den Läufen realistisch Zeit hat
+durchzulaufen. Konkret sind das pro Rechner **zwei** Aufgaben (nicht nur eine):
+zuerst `scripts/Invoke-OneDriveSync.ps1` (stößt einen OneDrive-Sync-Check an -
+kein offizieller, garantierter "Sync jetzt"-Befehl, siehe README), 10 Minuten
+später erst `DocFlowEngine.ps1` selbst. Die Startzeiten dieses Paars werden dann
+zusätzlich pro Rechner versetzt (z. B. Rechner A 08:00/08:10, Rechner B
+08:20/08:30). Vollständiges, copy-paste-fertiges Beispiel inkl.
+`-RunOnlyIfNetworkAvailable` und `-LogonType Interactive` (Begründung: der
+OneDrive-Client läuft nur in einer interaktiven Benutzersitzung) im
+[README](../README.md#regelmäßige-automatisierung).
 
 ### Baustein 5 – Defense-in-Depth: Ziel-Existenz-Check
 

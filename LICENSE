@@ -31,3 +31,7 @@ This script automatically accesses files within the configured OneDrive folders,
 - **Incorrect or incomplete state data:** If the state file (`.docflow-state.json`) is modified, deleted, or corrupted, already-copied files may be processed and duplicated again.
 
 Use of this script is at your own risk. The creator/author of this script assumes **no liability** for data loss, faulty copy operations, synchronization issues, or other damages arising from its use – in particular from incorrect configuration or improper operation. It is strongly recommended to first review any configuration change in `-DryRun` mode before running the script in production (without `-DryRun`).
+
+**Use within a company or organization:** If this script is used within a company or other organization without the author's knowledge and without the author's explicit authorization, the author/copyright holder assumes **no liability whatsoever** for any resulting damages, losses, or other consequences, regardless of their nature or extent. Any such use happens entirely at the risk of the organization and the individuals deploying it.
+
+**Modified versions:** This disclaimer of liability applies equally to any modified, adapted, or derivative version of this script, including modifications made or used within a company or other organization. The author/copyright holder assumes no liability for damages arising from such modified versions, regardless of who made the modifications, how they were made, or how the modified version is used.

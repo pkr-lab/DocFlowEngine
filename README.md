@@ -49,6 +49,8 @@ sudo apt-get install -y powershell
 - `config/docflow-config.psd1` - PowerShell-Data-Konfiguration mit Quellen, Zielen und Umbenennungsregeln
 - `config/project-routes.txt` - Startbestand der Präfix/Suffix-Whitelist, von Hand gepflegt und versioniert. Wird bei jedem Lauf automatisch in die geteilte Laufzeit-Kopie synchronisiert (siehe [docs/Konzepte/MULTI-MACHINE-SETUP.md](docs/Konzepte/MULTI-MACHINE-SETUP.md))
 - `scripts/DocFlowEngine.ps1` - Skript-Wrapper, der das modulare `DocFlowEngine.psm1` ausführt
+- `scripts/Invoke-OneDriveSync.ps1` - Eigenständiges Skript, das vor dem eigentlichen Lauf einen OneDrive-Sync anstößt (siehe "Regelmäßige Automatisierung" unten)
+- `scripts/Rename-ExistingAufgaben.ps1` - Eigenständiges, manuell auszuführendes Migrationsskript für bestehende (nicht dem Namensschema folgende) Alt-Dateien (siehe unten)
 - `scripts/DocFlowEngine.psm1` - Root-Modul: bindet die Teilmodule unten ein und stellt `Invoke-DocFlowEngine` bereit
 - `scripts/DocFlowEngine/Common.ps1` - Logging, Pfadauflösung, generische Hilfsfunktionen
 - `scripts/DocFlowEngine/Config.ps1` - Laden und Validieren der Konfiguration inkl. Defaults
@@ -60,7 +62,7 @@ sudo apt-get install -y powershell
 - `tests/DocFlowEngine.Tests.ps1` - Pester-Tests für Konfiguration, Benennung, Kopieren, Rücklauf und Locking
 - `docs/` - Detail-Dokumentation, siehe [Abschnitt "Dokumentation"](#dokumentation) unten
 - `.gitignore` - schließt Laufzeitdateien (State, Log, Lock, Pro-Datei-Hinweise) von Git aus
-- `.docflow-state.json` - Statusdatei, die bereits verarbeitete Dateien speichert (im Multi-Machine-Betrieb im geteilten Ordner, siehe unten)
+- `.docflow-state.json` - Statusdatei, die bereits verarbeitete Dateien speichert (im Multi-Machine-Betrieb im geteilten Ordner, siehe unten). Einträge älter als `stateRetentionYears` (Default 3 Jahre) werden bei jedem Lauf automatisch entfernt, damit die Datei nicht unbegrenzt wächst
 
 ## Beispiel-Workflow
 
@@ -196,16 +198,103 @@ In beiden Fällen legt DocFlowEngine direkt neben der Datei einen individuellen 
 
 **"Korrigiert"-Rücklauf:** Benennt ein Ausbilder eine geprüfte Datei unterhalb von `aufgabenRoot` um und hängt `_k-<beliebiger Text>` an (z. B. `20260625_pke_Java_Arrays_abc_k-ml.pdf` oder auch `..._k-abc.pdf`), kopiert DocFlowEngine sie beim nächsten Lauf automatisch in einen `Korrigiert`-Unterordner im ursprünglichen Schülerordner zurück (Original bleibt erhalten). Der Text nach `_k-` selbst hat **keinen** Einfluss darauf, wohin kopiert wird - er ist nur das Erkennungsmerkmal für "diese Datei ist korrigiert" und kann frei gewählt werden (z. B. das Kürzel des Ausbilders). Maßgeblich für den Zielordner ist stattdessen das Schüler-Kürzel, das bereits vorne im (unveränderten) Dateinamen steht (`pke` im Beispiel) - dieselben Initialen, die beim ursprünglichen Hochladen bereits die Zuordnung Kürzel → Schülerordner in `reviewMarker.kuerzelRoutesFile` angelegt haben. Kann DocFlowEngine dafür keinen Schülerordner ermitteln, legt es `<Dateiname>.KUERZEL-UNBEKANNT.txt` an, statt die Datei stillschweigend zu überspringen. Details und Designentscheidungen: [docs/Konzepte/ERWEITERUNGSKONZEPT.md](docs/Konzepte/ERWEITERUNGSKONZEPT.md).
 
-### Regelmäßige Automatisierung
+### Alt-Bestand nachträglich ins Namensschema bringen
 
-**Windows: Geplante Aufgabe (keine Admin-Rechte nötig für User Tasks):**
+`scripts/Rename-ExistingAufgaben.ps1` ist ein **eigenständiges, manuell auszuführendes** Skript (kein
+Teil des automatischen Laufs/der Aufgabenplanung) für bereits vorhandene Dateien, die nicht dem
+Namensschema folgen (z. B. Alt-Bestand von vor der Einführung von DocFlowEngine). Es benennt jede
+Datei so gut wie möglich in die Form `initialen_praefix_suffix_aufgabennummer` um - für Teile, die
+sich nicht zuverlässig bestimmen lassen (Präfix/Suffix nur anhand der Whitelist in
+`project-routes.txt`, Initialen/Aufgabennummer nur anhand der Namensstruktur), wird der Platzhalter
+`PLATZHALTER` eingesetzt, statt zu raten.
+
 ```powershell
-$action = New-ScheduledTaskAction -Execute "pwsh" -Argument "-NoProfile -ExecutionPolicy Bypass -File C:\path\to\DocFlowEngine\scripts\DocFlowEngine.ps1"
-$trigger = New-ScheduledTaskTrigger -Daily -At 08:00
-Register-ScheduledTask -Action $action -Trigger $trigger -TaskName "DocFlowEngine" -Description "Automated document processing"
+# Vorschau (Standard - es wird nichts verändert)
+pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/Rename-ExistingAufgaben.ps1 -Path "C:\...\SchuelerMaterial\Max Mustermann"
+
+# Tatsächliches Umbenennen
+pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/Rename-ExistingAufgaben.ps1 -Path "C:\...\SchuelerMaterial\Max Mustermann" -Apply
 ```
 
-**macOS/Linux: Cron (ohne Admin-Rechte):**
+`-Path` ist bewusst frei wählbar (ein einzelner Schülerordner, mehrere, oder der ganze
+Austauschordner) - das Skript durchsucht ihn rekursiv. Ohne `-Apply` wird nur eine Tabelle
+angezeigt (alter Name → neuer Name), ohne dass etwas verändert wird - wichtig, da ein
+Massen-Umbenennen echter Dateien anhand einer Heuristik schwer rückgängig zu machen ist. Liegt eine
+Datei unterhalb eines konfigurierten `sources[]`-Eintrags, registriert `-Apply` sie zusätzlich in
+`.docflow-state.json` - **DocFlowEngine überspringt migrierte Dateien danach automatisch** beim
+nächsten regulären Lauf, statt sie erneut zu erkennen und ggf. eine Namenskonvention-Hinweisdatei
+dafür anzulegen. Bereits vom Skript erzeugte Hinweisdateien (`.NAMENSKONVENTION-FEHLER.txt`,
+`.KUERZEL-UNBEKANNT.txt`) sowie Dateien im `Korrigiert`-Ordner werden von der Umbenennung
+ausgenommen.
+
+### Regelmäßige Automatisierung
+
+**Windows: Geplante Aufgaben (keine Admin-Rechte nötig für User Tasks)**
+
+Pro Rechner werden **zwei zeitlich versetzte Aufgaben** angelegt, keine einzelne: zuerst ein
+OneDrive-Sync-Anstoß (`scripts/Invoke-OneDriveSync.ps1`), erst 10 Minuten später der eigentliche
+DocFlowEngine-Lauf. Der Abstand gibt OneDrive Zeit, neu hochgeladene Schülerdateien tatsächlich
+herunterzusynchronisieren, bevor DocFlowEngine den Ordner scannt - ohne diesen Puffer würde
+DocFlowEngine ggf. gegen einen noch unvollständigen lokalen Ordnerstand laufen.
+
+```powershell
+$commonSettings = New-ScheduledTaskSettingsSet -RunOnlyIfNetworkAvailable
+$principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive
+
+# Aufgabe 1: OneDrive-Sync anstoßen, 08:00 Uhr
+$syncAction = New-ScheduledTaskAction -Execute "pwsh" -Argument "-NoProfile -ExecutionPolicy Bypass -File C:\path\to\DocFlowEngine\scripts\Invoke-OneDriveSync.ps1"
+$syncTrigger = New-ScheduledTaskTrigger -Daily -At 08:00
+Register-ScheduledTask -Action $syncAction -Trigger $syncTrigger -Settings $commonSettings -Principal $principal -TaskName "DocFlowEngine-Sync" -Description "Stoesst OneDrive-Sync vor dem DocFlowEngine-Lauf an"
+
+# Aufgabe 2: DocFlowEngine selbst, 10 Minuten spaeter
+$runAction = New-ScheduledTaskAction -Execute "pwsh" -Argument "-NoProfile -ExecutionPolicy Bypass -File C:\path\to\DocFlowEngine\scripts\DocFlowEngine.ps1"
+$runTrigger = New-ScheduledTaskTrigger -Daily -At 08:10
+Register-ScheduledTask -Action $runAction -Trigger $runTrigger -Settings $commonSettings -Principal $principal -TaskName "DocFlowEngine-Run" -Description "Automated document processing"
+```
+
+Zwei Einstellungen sind hier bewusst explizit gesetzt, nicht nur der Standard:
+
+- **`-RunOnlyIfNetworkAvailable`**: Beide Aufgaben starten nur, wenn eine Netzwerkverbindung besteht
+  (relevant z. B. bei Laptops, die morgens erst noch ins WLAN kommen müssen) - ohne Netzwerk liefe
+  DocFlowEngine sonst gegen einen (noch) nicht synchronisierten OneDrive-Ordner.
+- **`-LogonType Interactive`** (über `New-ScheduledTaskPrincipal`): Die Aufgaben laufen nur, wenn der
+  Benutzer angemeldet ist - nicht "unabhängig von der Anmeldung" (`-LogonType S4U`/`Password`). Das
+  ist kein Stil-, sondern ein Notwendigkeits-Punkt: Der OneDrive-Client (und damit der lokal
+  gespiegelte Ordner, den DocFlowEngine liest) läuft selbst nur innerhalb einer interaktiven
+  Benutzersitzung. Eine Aufgabe im Hintergrund-Modus ohne Anmeldung liefe in einer Sitzung, in der
+  OneDrive gar nicht aktiv ist - das betrifft beide Aufgaben, `Invoke-OneDriveSync.ps1` genauso wie
+  `DocFlowEngine.ps1` selbst.
+
+**`Invoke-OneDriveSync.ps1` ehrlich eingeordnet:** Es gibt keinen offiziellen "Sync jetzt"-Befehl von
+Microsoft. Das Skript beendet den OneDrive-Prozess des Benutzers und startet ihn neu, was einen
+frischen Dateicheck erzwingt - das ist ein **Anstoßen**, keine garantierte, blockierende
+"warte bis fertig"-Operation. Genau deshalb der 10-Minuten-Puffer bis zum eigentlichen Lauf statt
+eines Wartens auf ein (nicht existierendes) Abschluss-Signal. Ist `OneDrive.exe` nicht auffindbar
+(z. B. Rechner ohne OneDrive), überspringt das Skript den Neustart mit einer Warnung, statt
+abzubrechen.
+
+**Mehrere Rechner: Zeiten gegeneinander staffeln**
+
+Für den Multi-Machine-Betrieb (siehe [docs/Konzepte/MULTI-MACHINE-SETUP.md](docs/Konzepte/MULTI-MACHINE-SETUP.md))
+zusätzlich die Uhrzeiten pro Rechner versetzen, damit nicht alle Rechner gleichzeitig auf die
+geteilten Dateien zugreifen (die Lock-Datei fängt Kollisionen zwar ab, ein versetzter Zeitplan
+vermeidet unnötig übersprungene Läufe aber von vornherein):
+
+| Rechner | Sync-Aufgabe | DocFlowEngine-Aufgabe |
+|---|---|---|
+| Rechner A | 08:00 | 08:10 |
+| Rechner B | 08:20 | 08:30 |
+| Rechner C | 08:40 | 08:50 |
+
+Der 10-Minuten-Abstand zwischen Sync- und Run-Aufgabe (siehe oben) bleibt pro Rechner gleich - nur
+der Startzeitpunkt jedes Rechner-Paars wandert, analog zu `$syncTrigger`/`$runTrigger` oben mit
+jeweils angepasster `-At`-Uhrzeit.
+
+**macOS/Linux: Cron (ohne Admin-Rechte)**
+
+`Invoke-OneDriveSync.ps1` ist Windows-spezifisch (OneDrive-Desktop-Client unter `$env:LOCALAPPDATA`) -
+auf macOS/Linux entfällt der erste Schritt, hier reicht ein einzelner Cron-Eintrag:
+
 ```bash
 # Crontab öffnen
 crontab -e

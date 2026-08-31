@@ -359,3 +359,55 @@ function Resolve-ProjectTarget {
 
     return $null
 }
+
+function Get-DocFlowMigratedFileName {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [array]$Rules,
+        [hashtable]$Registry = $null,
+        [string]$Placeholder = 'PLATZHALTER'
+    )
+
+    foreach ($rule in $Rules) {
+        if ([regex]::new($rule.match).Match($Name).Success) {
+            return $Name
+        }
+    }
+
+    $tokens = @($Name -split '[_\-\s\.]+' | Where-Object { $_ })
+    $usedTokens = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+
+    $praefix = $Placeholder
+    if ($Registry -and $Registry.Praefixe) {
+        $praefixMatches = @($Registry.Praefixe | Where-Object { $tokens -contains $_ })
+        if ($praefixMatches.Count -eq 1) {
+            $praefix = $praefixMatches[0]
+            [void]$usedTokens.Add($praefix)
+        }
+    }
+
+    $suffix = $Placeholder
+    if ($Registry -and $Registry.Suffixe) {
+        $suffixMatches = @($Registry.Suffixe | Where-Object { ($tokens -contains $_) -and (-not $usedTokens.Contains($_)) })
+        if ($suffixMatches.Count -eq 1) {
+            $suffix = $suffixMatches[0]
+            [void]$usedTokens.Add($suffix)
+        }
+    }
+
+    $remainingTokens = @($tokens | Where-Object { -not $usedTokens.Contains($_) })
+
+    $initials = $Placeholder
+    if ($remainingTokens.Count -gt 0 -and $remainingTokens[0] -match '^[A-Za-z]{2,5}$') {
+        $initials = $remainingTokens[0]
+        $remainingTokens = @($remainingTokens | Select-Object -Skip 1)
+    }
+
+    $aufgabennummer = $Placeholder
+    if ($remainingTokens.Count -gt 0 -and $remainingTokens[-1] -match '^[A-Za-z0-9]+$') {
+        $aufgabennummer = $remainingTokens[-1]
+    }
+
+    return "${initials}_${praefix}_${suffix}_${aufgabennummer}"
+}
