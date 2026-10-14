@@ -72,7 +72,9 @@ function Copy-ReviewedFiles {
         [Parameter(Mandatory)] [hashtable]$KuerzelRoutes,
         [Parameter(Mandatory)] [hashtable]$State,
         [Parameter(Mandatory)] [array]$Rules,
-        [hashtable]$UnknownKuerzelHint = $null
+        [hashtable]$UnknownKuerzelHint = $null,
+        [int]$RetryCount = 2,
+        [int]$RetryDelaySeconds = 5
     )
 
     if (-not $ReviewMarker.enabled) {
@@ -83,16 +85,23 @@ function Copy-ReviewedFiles {
         return
     }
 
+    $unknownKuerzelSuffix = '.KUERZEL-UNBEKANNT.txt'
+    Remove-DocFlowOrphanedHintFiles -Directory $AufgabenRoot -HintSuffixes @($unknownKuerzelSuffix)
+
     $korrigiertFolderName = $ReviewMarker.korrigiertFolderName
     if (-not $korrigiertFolderName) {
         $korrigiertFolderName = 'Korrigiert'
     }
 
-    $pattern = [regex]::new($ReviewMarker.pattern)
+    $pattern = [regex]::new($ReviewMarker.pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
     $items = Get-ChildItem -Path $AufgabenRoot -File -Recurse -ErrorAction SilentlyContinue
 
     foreach ($item in $items) {
         if (Test-DocFlowInsideNamedFolder -DirectoryName $item.DirectoryName -FolderName $korrigiertFolderName) {
+            continue
+        }
+
+        if ($item.Name.EndsWith($unknownKuerzelSuffix, [System.StringComparison]::OrdinalIgnoreCase)) {
             continue
         }
 
@@ -107,8 +116,9 @@ function Copy-ReviewedFiles {
             continue
         }
 
-        $originalStem = $nameWithoutExtension.Substring(0, $markerMatch.Index) -replace '^\d{8}_', ''
+        $originalStem = $nameWithoutExtension.Substring(0, $markerMatch.Index) -replace '^\d{8}(?:\d{6})?_', ''
         $kuerzel = Get-FileInitialsFromName -Name $originalStem -Rules $Rules
+        $hintPath = Join-Path $item.DirectoryName "$($item.Name)$unknownKuerzelSuffix"
 
         if ($kuerzel -and $KuerzelRoutes.ContainsKey($kuerzel.ToLowerInvariant())) {
             $studentFolder = $KuerzelRoutes[$kuerzel.ToLowerInvariant()]
@@ -118,7 +128,12 @@ function Copy-ReviewedFiles {
                 if ($Script:DryRun) {
                     Write-Log -Level Info -Message "[DryRun] Verzeichnis würde erstellt: $korrigiertFolder"
                 } else {
-                    New-Item -ItemType Directory -Path $korrigiertFolder -Force | Out-Null
+                    try {
+                        New-Item -ItemType Directory -Path $korrigiertFolder -Force -ErrorAction Stop | Out-Null
+                    } catch {
+                        Write-Log -Level Error -Message "Verzeichnis konnte nicht erstellt werden: '$korrigiertFolder' ($($_.Exception.Message)). Rückkopie von '$($item.Name)' wird beim nächsten Lauf erneut versucht."
+                        continue
+                    }
                 }
             }
 
@@ -128,7 +143,9 @@ function Copy-ReviewedFiles {
                 Write-Log -Level Info -Message "[DryRun] Korrigierte Datei würde zurückkopiert: '$($item.FullName)' -> '$destinationPath'"
             } else {
                 Write-Log -Level Info -Message "Kopiere korrigierte Datei zurück: '$($item.FullName)' -> '$destinationPath'"
-                Copy-Item -Path $item.FullName -Destination $destinationPath -Force
+                if (-not (Copy-DocFlowFileWithRetry -Source $item.FullName -Destination $destinationPath -RetryCount $RetryCount -RetryDelaySeconds $RetryDelaySeconds)) {
+                    continue
+                }
             }
 
             $State.reviewedFiles[$reviewKey] = [ordered]@{
@@ -137,23 +154,18 @@ function Copy-ReviewedFiles {
                 kuerzel = $kuerzel.ToLowerInvariant()
                 processedAt = (Get-Date).ToString('o')
             }
+
+            Remove-DocFlowHintFile -Path $hintPath -Reason 'Korrektur wurde zurückkopiert'
         } else {
             Write-Log -Level Warning -Message "Kein Schülerordner für '$($item.Name)' ermittelbar (erkanntes Kürzel aus dem Dateinamen: '$kuerzel') - Rückkopie übersprungen."
 
             if ($UnknownKuerzelHint -and $UnknownKuerzelHint.enabled) {
-                $hintPath = Join-Path $item.DirectoryName "$($item.Name).KUERZEL-UNBEKANNT.txt"
-                if (-not (Test-Path $hintPath)) {
-                    $context = [ordered]@{
-                        fileName = $item.Name
-                        kuerzel = if ($kuerzel) { $kuerzel } else { '' }
-                    }
-                    $message = Expand-Template -Template $UnknownKuerzelHint.message -Context $context
-                    if ($Script:DryRun) {
-                        Write-Log -Level Info -Message "[DryRun] Hinweis-Datei würde erstellt: '$hintPath'"
-                    } else {
-                        Set-Content -Path $hintPath -Value $message -Encoding UTF8
-                    }
+                $context = [ordered]@{
+                    fileName = $item.Name
+                    kuerzel = if ($kuerzel) { $kuerzel } else { '' }
                 }
+                $message = Expand-Template -Template $UnknownKuerzelHint.message -Context $context
+                Write-DocFlowHintFile -Path $hintPath -Content $message -LogMessage "Kürzel für '$($item.Name)' unbekannt."
             }
         }
     }
