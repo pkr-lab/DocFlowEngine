@@ -19,6 +19,20 @@ Umbenennungs-Template unter Umständen unersetzt im Dateinamen stehen, und `Get-
 könnte nicht zuverlässig zwischen "Regel hat keine `initials`-Gruppe" und "Gruppe vorhanden, aber
 nicht getroffen" unterscheiden.
 
+**Alle Regex-Auswertungen der Namensregeln laufen mit `RegexOptions.IgnoreCase`.** Der `-match`-
+Operator (in `Get-FilePraefixSuffix`) ignoriert Groß-/Kleinschreibung von sich aus, `[regex]::new()`
+nicht. Früher führte das bei `AHf_V2_Java_Arrays_1` dazu, dass die Datei zwar als Aufgabe erkannt,
+aber mit dem Fallback-Namen `{timestamp}_...` abgelegt wurde; beim Rücklauf ließ sich daraus kein
+Kürzel mehr lesen und die Korrektur kam nie beim Schüler an. Deshalb verwenden
+`Get-TargetFileName`, `Get-FileInitialsFromName`, `Get-DocFlowSubmissionParts`,
+`Get-DocFlowMigratedFileName` und die `reviewMarker`-Erkennung einheitlich `IgnoreCase`.
+
+**Die Whitelist wird beim Abgleich komplett neu geschrieben statt ergänzt.** Seit Präfix und Suffix
+als Paar gelten, hängt die Bedeutung einer `suffix=`-Zeile vom Präfix darüber ab. Einfaches Anhängen
+würde neue Suffixe dem letzten Präfix der Datei zuordnen. `Sync-ProjectRoutesFromSeed` führt deshalb
+beide Dateien als Struktur zusammen und schreibt nur dann, wenn sich das Ergebnis vom aktuellen
+Inhalt unterscheidet (Kommentare bleiben so erhalten, solange nichts ergänzt wird).
+
 ## `Common.ps1`
 
 **`Resolve-PathOrAbsolute` schneidet bei Wildcard-Pfaden Segmente vom Ende ab.** Ein Pfad wie
@@ -68,3 +82,25 @@ fälschlich erneut als "neue" Quelldatei erkannt und in einer Endlosschleife wei
 eine Defense-in-Depth-Absicherung für den Multi-Machine-Betrieb (verhindert Datenverlust, falls die
 State-Datei zwischen zwei Rechnern noch nicht synchronisiert ist) - Details siehe
 [Konzepte/MULTI-MACHINE-SETUP.md](Konzepte/MULTI-MACHINE-SETUP.md).
+
+## Zustand und Abgabe-Erkennung (`CopyForward.ps1`)
+
+**Größe plus Änderungszeit statt Prüfsumme.** Eine Prüfsumme müsste jede Datei bei jedem Lauf
+vollständig lesen; bei OneDrive-Dateien „nur online“ würde das jede Datei herunterladen. Größe und
+Änderungszeit stehen ohne Lesen zur Verfügung. Die Änderungszeit wird in ganzen Sekunden gespeichert
+und mit 2 Sekunden Toleranz verglichen, weil OneDrive Zeitstempel je nach Rechner unterschiedlich
+fein überträgt; ohne Toleranz könnte ein anderer Rechner im Multi-Machine-Betrieb fälschlich eine
+Doppelabgabe melden.
+
+**Eine identische Datei im Zielordner wird übernommen statt gemeldet.** Bricht ein Lauf nach dem
+Kopieren, aber vor dem Speichern des Zustands ab, liegt die Datei beim nächsten Lauf schon im
+Zielordner, ohne im Zustand zu stehen. Bei gleicher Größe wird sie deshalb stillschweigend als
+verarbeitet eingetragen; nur bei abweichender Größe gilt sie als neue Abgabe unter altem Namen.
+
+**Kein Zustandseintrag bei Fehlern.** Fehlgeschlagene Kopien, Namensfehler, Doppelabgaben und noch
+nicht fertig geschriebene Dateien werden bewusst nicht in `processed` eingetragen. So prüft der
+nächste Lauf sie automatisch erneut, ohne dass jemand die Zustandsdatei bearbeiten muss.
+
+**Wiederholungen mit fester Pause im selben Lauf.** Typische Ursachen für Kopierfehler (Datei kurz
+von OneDrive oder Word gesperrt) lösen sich meist nach wenigen Sekunden. Zwei Wiederholungen mit
+5 Sekunden Pause verlängern einen Lauf im Fehlerfall nur um 10 Sekunden pro Datei.
