@@ -54,6 +54,21 @@ Format (kein JSON/CSV). Für Auswertungen eignet sich `Select-String`/`grep` auf
 | `Kopiere Datei: ... -> ...` | Erfolgreiche Kopie im Vorwärtslauf. |
 | `Zieldatei existiert bereits, überspringe Kopie: ...` | Ziel-Existenz-Check hat gegriffen (Multi-Machine-Absicherung, siehe [MULTI-MACHINE-SETUP.md](Konzepte/MULTI-MACHINE-SETUP.md)). |
 | `Datei '...' entspricht nicht der erwarteten Namenskonvention. Hinweis-Datei erstellt: ...` | Naming-Hint wurde erzeugt (Schema nicht erfüllt oder Präfix/Suffix unbekannt). |
+| `Whitelist geladen: '...' (6 Präfixe, 11 Kombinationen)` | Pfad und Umfang der tatsächlich genutzten Präfix/Suffix-Whitelist. Weichen die Zahlen von der Erwartung ab, wird eine andere Datei gelesen als gedacht, oder Zeilen sind fehlerhaft. Bei `log.level = 'Debug'` folgt die vollständige Liste der Einträge. |
+| `Datei '...': Präfix '...' ist nicht in der Whitelist '...' eingetragen.` / `Datei '...': Suffix '...' ist für Präfix '...' nicht in der Whitelist '...' eingetragen.` | Dateiname passt zum Schema, aber der Präfix fehlt oder die Kombination ist nicht erlaubt. Die Datei wird nicht kopiert, der Schüler bekommt eine Hinweisdatei. |
+| `Datei '...' passt nicht zum Schema ...` | Dateiname verletzt das Schema selbst (z. B. Leerzeichen, Bindestrich, Umlaut, fehlender Suffix). |
+| `Ungültige Zeile in Whitelist '...' ignoriert` / `Unbekannter Schlüssel '...' in Whitelist '...' ignoriert` | Eine Zeile in `project-routes.txt` hat nicht die Form `praefix=<Name>` bzw. `suffix=<Name>` und wird nicht berücksichtigt. |
+| `Kein Ziel für '...' ermittelbar (...). Datei wird übersprungen.` | Datei ist nicht über `aufgabenRoot` routbar, es sind keine `targets` konfiguriert und der Namenshinweis ist abgeschaltet. Die Datei wird nicht kopiert und beim nächsten Lauf erneut geprüft. |
+| `Kopierversuch 1 von 3 fehlgeschlagen: ... Neuer Versuch in 5 Sekunden.` | Einzelner Kopierversuch gescheitert, es wird automatisch wiederholt (`copyRetry`). |
+| `[ERROR] Kopieren nach 3 Versuchen fehlgeschlagen: ... Wird beim nächsten Lauf erneut versucht.` | Alle Versuche gescheitert. Die Datei steht nicht im Zustand und wird im nächsten Lauf neu versucht. |
+| `Datei '...' wurde vor weniger als 2 Minuten geändert ...` / `Datei '...' ist gerade gesperrt ...` | Datei wird noch geschrieben/synchronisiert (`minFileAgeMinutes`); Verarbeitung im nächsten Lauf. |
+| `Datei '...' wurde nach der Abgabe unter gleichem Namen überschrieben ...` | Schüler hat eine bereits kopierte Datei überschrieben; keine Kopie, Hinweis `.BEREITS-ABGEGEBEN.txt` (`duplicateHint`). |
+| `Datei '...' wurde bereits abgegeben ('...'). Sie wird nicht erneut kopiert ...` | Im Zielordner liegt schon eine Abgabe mit diesem Namen; keine Kopie, Hinweis mit Vorschlag der nächsten Version. |
+| `Datei '...' liegt bereits identisch in '...'. Wird als verarbeitet übernommen.` | Zieldatei existierte schon in gleicher Größe (z. B. nach abgebrochenem Lauf); kein Hinweis. |
+| `Hinweis-Datei entfernt (...)` | Ein Hinweis traf nicht mehr zu (Datei umbenannt, gelöscht oder erfolgreich verarbeitet) und wurde gelöscht. |
+| `Whitelist-Datei '...' neu geschrieben (ergänzt um: Java/ArrayList, ...)` | Abgleich mit dem Startbestand hat Kombinationen ergänzt bzw. die Datei nach Präfix gruppiert. |
+| `Suffix '...' in Whitelist '...' steht vor dem ersten praefix= ...` | Ein Suffix ohne Präfix darüber wird ignoriert. |
+| `Bereits in früheren Läufen verarbeitet und daher übersprungen: 3` | Anzahl der Dateien eines Quellordners, die laut Zustandsdatei schon verarbeitet wurden und deshalb nicht erneut kopiert werden. |
 | `Neues Kürzel erkannt und in Kuerzel-Registry aufgenommen: '...' -> '...'` | Kürzel→Schülerordner-Zuordnung wurde erstmalig registriert. |
 | `Kopiere korrigierte Datei zurück: ... -> .../Korrigiert/...` | "Korrigiert"-Rücklauf hat eine Datei zurückkopiert. |
 | `Unbekanntes Kürzel '...' in '...' - kein Schülerordner bekannt, Rückkopie übersprungen.` | Rücklauf konnte das Kürzel nicht auflösen, `unknownKuerzelHint` greift. |

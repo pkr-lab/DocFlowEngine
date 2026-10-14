@@ -6,7 +6,7 @@ Dieses Projekt dient der Überwachung von Quellordnern, der Erkennung neuer Doku
 
 ## Erste Schritte
 
-1. Passe die Konfiguration in `config/docflow-config.psd1` an.
+1. Passe die Konfiguration in `config/docflow-config.psd1` an. Pfade werden nur ganz oben im Block `paths` geändert, alle anderen Einträge verweisen per `{name}` darauf (siehe [docs/Configuration.md](docs/Configuration.md#paths-optional-empfohlen---pfade-nur-ganz-oben-anpassen)).
 2. Führe das Skript im DryRun-Modus aus, um die geplanten Aktionen zu prüfen:
    ```powershell
    pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/DocFlowEngine.ps1 -DryRun
@@ -73,14 +73,13 @@ folgen dem Schema `<initialen>[_v<version>]_<praefix>_<suffix>_<aufgabennummer>`
 `pke_Java_Arrays_abc.pdf`, bei einer erneuten Abgabe `pke_v2_Java_Arrays_abc.pdf`) und werden nach
 `docs/Aufgaben/<Präfix>/<Suffix>/` sortiert. Die Versionsangabe ist optional - ohne sie funktioniert
 das Schema wie bisher, mit ihr lassen sich mehrere Abgaben derselben Aufgabe unterscheiden, statt sich
-gegenseitig zu überschreiben. Alle anderen Dateien (z. B. datierte Rechnungen/Berichte) landen wie
-gewohnt in `docs/archive/`.
+gegenseitig zu überschreiben. Ein Archiv gibt es nicht mehr: Dateien, die nicht zum Schema passen
+oder deren Präfix/Suffix unbekannt ist, werden nicht kopiert, sondern erhalten eine Hinweisdatei
+beim Schüler.
 
 **Verzeichnisstruktur vor Ausführung:**
 ```
 C:/Users/p0*/OneDrive - D*/SharePoint/
-├── 2026-06-20 Invoice.pdf
-├── 2026-06-22 Report.pdf
 ├── Unsorted.pdf
 └── pke_Java_Arrays_abc.pdf
 ```
@@ -93,14 +92,6 @@ C:/Users/p0*/OneDrive - D*/SharePoint/
             path            = 'C:/Users/p0*/OneDrive - D*/SharePoint'
             recursive       = $true
             includePatterns = @('*.pdf', '*.docx', '*.doc', '*.xlsx')
-        }
-    )
-
-    targets = @(
-        @{
-            path               = 'C:/Users/p0*/OneDrive - D*/SharePoint/SchuelerMaterial/docs/archive'
-            createIfMissing    = $true
-            preserveSubfolders = $false
         }
     )
 
@@ -140,10 +131,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/DocFlowEngine.ps1 -DryRu
 
 # Output:
 # [2026-06-25 10:30:15] [Info] Lade Konfiguration: .\config\docflow-config.psd1
-# [2026-06-25 10:30:15] [Info] Gefundene Dateien in '...SharePoint': 4
-# [2026-06-25 10:30:15] [Info] [DryRun] Datei würde kopiert: ...2026-06-20 Invoice.pdf -> ...archive/2026-06-20_Invoice.pdf
-# [2026-06-25 10:30:15] [Info] [DryRun] Datei würde kopiert: ...2026-06-22 Report.pdf -> ...archive/2026-06-22_Report.pdf
-# [2026-06-25 10:30:15] [Info] [DryRun] Datei würde kopiert: ...Unsorted.pdf -> ...archive/20260625103015_Unsorted.pdf
+# [2026-06-25 10:30:15] [Info] Gefundene Dateien in '...SharePoint': 2
+# [2026-06-25 10:30:15] [Warning] Datei 'Unsorted.pdf' passt nicht zum Schema ...
+# [2026-06-25 10:30:15] [Warning] [DryRun] Datei 'Unsorted.pdf' entspricht nicht der erwarteten Namenskonvention. Hinweis-Datei würde erstellt: ...
 # [2026-06-25 10:30:15] [Info] [DryRun] Datei würde kopiert: ...pke_Java_Arrays_abc.pdf -> ...Aufgaben/Java/Arrays/20260625_pke_Java_Arrays_abc.pdf
 
 # 2. Tatsächliche Ausführung
@@ -151,10 +141,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/DocFlowEngine.ps1
 
 # Output:
 # [2026-06-25 10:30:15] [Info] Lade Konfiguration: .\config\docflow-config.psd1
-# [2026-06-25 10:30:15] [Info] Gefundene Dateien in '...SharePoint': 4
-# [2026-06-25 10:30:15] [Info] Kopiere Datei: ...2026-06-20 Invoice.pdf -> ...archive/2026-06-20_Invoice.pdf
-# [2026-06-25 10:30:15] [Info] Kopiere Datei: ...2026-06-22 Report.pdf -> ...archive/2026-06-22_Report.pdf
-# [2026-06-25 10:30:15] [Info] Kopiere Datei: ...Unsorted.pdf -> ...archive/20260625103015_Unsorted.pdf
+# [2026-06-25 10:30:15] [Info] Gefundene Dateien in '...SharePoint': 2
+# [2026-06-25 10:30:15] [Warning] Datei 'Unsorted.pdf' passt nicht zum Schema ...
+# [2026-06-25 10:30:15] [Warning] Datei 'Unsorted.pdf' entspricht nicht der erwarteten Namenskonvention. Hinweis-Datei erstellt: ...
 # [2026-06-25 10:30:15] [Info] Kopiere Datei: ...pke_Java_Arrays_abc.pdf -> ...Aufgaben/Java/Arrays/20260625_pke_Java_Arrays_abc.pdf
 # [2026-06-25 10:30:15] [Info] Verarbeitung abgeschlossen.
 ```
@@ -171,32 +160,33 @@ C:/Users/p0*/OneDrive - D*/SharePoint/SchuelerMaterial/
 │   │   ├──SQL
 │   │   ├──Netzwerktechnik
 │   │   └──Zahlensysteme
-│   └── archive/
-│       ├── 2026-06-20_Invoice.pdf
-│       ├── 2026-06-22_Report.pdf
-│       └── 20260625103015_Unsorted.pdf
 ├── .docflow-state.json (speichert verarbeitete Dateien)
 └── docflow.log
 ```
 
-`Java` und `Arrays` mussten dafür bereits vorab in `config/project-routes.txt` stehen
-(`praefix=Java` / `suffix=Arrays`). Ein Präfix oder Suffix, der dort nicht gelistet ist, wird wie
-eine falsche Namenskonvention behandelt (siehe nächster Abschnitt). Neue Fächer/Themen werden von
+Die Kombination `Java`/`Arrays` musste dafür bereits vorab in `config/project-routes.txt` stehen
+(`praefix=Java`, darunter `suffix=Arrays`; ein Suffix gehört immer zum Präfix darüber). Eine
+Kombination, die dort nicht gelistet ist, wird wie eine falsche Namenskonvention behandelt (siehe
+nächster Abschnitt). Neue Fächer/Themen werden von
 Hand in `config/project-routes.txt` ergänzt (dem versionierten Startbestand im Repo) - DocFlowEngine
 kopiert diese Datei bei jedem Lauf automatisch in die unter `projectRoutesFile` konfigurierte,
 tatsächlich genutzte Kopie (legt sie beim ersten Mal an, ergänzt bei jedem weiteren Lauf neue
-Zeilen aus dem Startbestand). Ein manuelles Kopieren ist nicht mehr nötig; siehe `projectRoutesSeedFile` in
+Kombinationen aus dem Startbestand unter dem passenden Präfix). Ein manuelles Kopieren ist nicht mehr nötig; siehe `projectRoutesSeedFile` in
 [docs/Configuration.md](docs/Configuration.md).
 
-**Wiederholte Ausführung:** Beim nächsten Lauf werden diese Dateien nicht erneut kopiert, da sie in `.docflow-state.json` gespeichert sind. Bereits sortierte Dateien unterhalb von `targets`/`aufgabenRoot` werden beim Scannen der Quelle automatisch ausgeschlossen, auch wenn Quell- und Zielordner denselben übergeordneten Pfad teilen.
+**Wiederholte Ausführung:** Beim nächsten Lauf werden diese Dateien nicht erneut kopiert, da sie in `.docflow-state.json` gespeichert sind. Bereits sortierte Dateien unterhalb von `aufgabenRoot` werden beim Scannen der Quelle automatisch ausgeschlossen, auch wenn Quell- und Zielordner denselben übergeordneten Pfad teilen.
 
 **Falsch benannte Dateien:** Eine Datei unterhalb von `aufgabenRoot` wird in zwei Fällen NICHT kopiert:
 1. Der Dateiname passt zu keiner Regel mit `praefix`/`suffix`-Gruppen (z. B. Suffix ganz weggelassen).
-2. Der Dateiname passt zwar zum Schema, aber Präfix und/oder Suffix stehen noch nicht in `project-routes.txt` (z. B. Tippfehler wie `Jaava` statt `Java`, oder ein noch nicht angelegtes neues Fach).
+2. Der Dateiname passt zwar zum Schema, aber die Kombination aus Präfix und Suffix steht nicht in `project-routes.txt` (z. B. Tippfehler wie `Jaava` statt `Java`, ein noch nicht angelegtes neues Fach oder ein Thema unter dem falschen Fach).
 
 In beiden Fällen legt DocFlowEngine direkt neben der Datei einen individuellen Hinweis an (`<Dateiname>.NAMENSKONVENTION-FEHLER.txt`, optional mit `{praefix}`/`{suffix}` in der Meldung), damit bei mehreren betroffenen Dateien im selben Ordner erkennbar bleibt, welche gemeint ist und woran es liegt.
 
-**"Korrigiert"-Rücklauf:** Benennt ein Ausbilder eine geprüfte Datei unterhalb von `aufgabenRoot` um und hängt `_k-<beliebiger Text>` an (z. B. `20260625_pke_Java_Arrays_abc_k-ml.pdf` oder auch `..._k-abc.pdf`), kopiert DocFlowEngine sie beim nächsten Lauf automatisch in einen `Korrigiert`-Unterordner im ursprünglichen Schülerordner zurück (Original bleibt erhalten). Der Text nach `_k-` selbst hat **keinen** Einfluss darauf, wohin kopiert wird - er ist nur das Erkennungsmerkmal für "diese Datei ist korrigiert" und kann frei gewählt werden (z. B. das Kürzel des Ausbilders). Maßgeblich für den Zielordner ist stattdessen das Schüler-Kürzel, das bereits vorne im (unveränderten) Dateinamen steht (`pke` im Beispiel) - dieselben Initialen, die beim ursprünglichen Hochladen bereits die Zuordnung Kürzel → Schülerordner in `reviewMarker.kuerzelRoutesFile` angelegt haben. Kann DocFlowEngine dafür keinen Schülerordner ermitteln, legt es `<Dateiname>.KUERZEL-UNBEKANNT.txt` an, statt die Datei stillschweigend zu überspringen. Details und Designentscheidungen: [docs/Konzepte/ERWEITERUNGSKONZEPT.md](docs/Konzepte/ERWEITERUNGSKONZEPT.md).
+**Erneute Abgabe:** Eine neue Version derselben Aufgabe gibt der Schüler mit Versionsangabe direkt hinter den Initialen ab (`pke_v2_Java_Arrays_abc.pdf`, Groß-/Kleinschreibung egal). Sie wird ganz normal neben die erste Abgabe kopiert. Lädt er stattdessen eine Datei mit einem bereits abgegebenen Namen hoch (alte Datei überschrieben oder gelöscht und neu hochgeladen), wird sie **nicht** kopiert; er bekommt `<Dateiname>.BEREITS-ABGEGEBEN.txt` mit dem Vorschlag für die nächste freie Versionsnummer (siehe `duplicateHint` in [docs/Configuration.md](docs/Configuration.md)).
+
+**Absicherungen:** Dateien werden erst verarbeitet, wenn sie mindestens 2 Minuten unverändert und nicht gesperrt sind (`minFileAgeMinutes`). Schlägt eine Kopie fehl, wird sie im selben Lauf zweimal wiederholt (`copyRetry`) und sonst im nächsten Lauf erneut versucht; als verarbeitet gilt eine Datei erst, wenn die Kopie nachweislich im Ziel liegt. Hinweisdateien, die nicht mehr zutreffen, werden automatisch entfernt.
+
+**"Korrigiert"-Rücklauf:** Benennt ein Ausbilder eine geprüfte Datei unterhalb von `aufgabenRoot` um und hängt `_k-<beliebiger Text>` an (Groß-/Kleinschreibung egal, z. B. `20260625_pke_Java_Arrays_abc_k-ml.pdf` oder auch `..._k-abc.pdf`), kopiert DocFlowEngine sie beim nächsten Lauf automatisch in einen `Korrigiert`-Unterordner im ursprünglichen Schülerordner zurück (Original bleibt erhalten). Der Text nach `_k-` selbst hat **keinen** Einfluss darauf, wohin kopiert wird - er ist nur das Erkennungsmerkmal für "diese Datei ist korrigiert" und kann frei gewählt werden (z. B. das Kürzel des Ausbilders). Maßgeblich für den Zielordner ist stattdessen das Schüler-Kürzel, das bereits vorne im (unveränderten) Dateinamen steht (`pke` im Beispiel) - dieselben Initialen, die beim ursprünglichen Hochladen bereits die Zuordnung Kürzel → Schülerordner in `reviewMarker.kuerzelRoutesFile` angelegt haben. Kann DocFlowEngine dafür keinen Schülerordner ermitteln, legt es `<Dateiname>.KUERZEL-UNBEKANNT.txt` an, statt die Datei stillschweigend zu überspringen. Details und Designentscheidungen: [docs/Konzepte/ERWEITERUNGSKONZEPT.md](docs/Konzepte/ERWEITERUNGSKONZEPT.md).
 
 ### Alt-Bestand nachträglich ins Namensschema bringen
 

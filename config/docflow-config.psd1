@@ -1,22 +1,21 @@
 @{
+    paths = @{
+        jahrgang = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung - Jahrgangsordner'
+        quelle   = '{jahrgang}/FI*/Austauschordner/'
+        material = '{jahrgang}/SchuelerMaterial'
+        shared   = '{material}/_DocFlowEngine-Shared'
+    }
+
     sources = @(
         @{
-            path             = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung - Jahrgangsordner/FI*/Austauschordner/'
+            path             = '{quelle}'
             recursive        = $true
             includePatterns  = @('*.pdf', '*.docx', '*.doc', '*.xlsx', '*.java', '*.zip', '*.py', '*.txt', '*.md', '*.csv', '*.pptx', '*.png', '*.jpg', '*.jpeg')
-            excludePatterns  = @('.*', 'Thumbs.db', 'desktop.ini', '~$*', '*.NAMENSKONVENTION-FEHLER.txt', '*.KUERZEL-UNBEKANNT.txt')
+            excludePatterns  = @('.*', 'Thumbs.db', 'desktop.ini', '~$*', '*.NAMENSKONVENTION-FEHLER.txt', '*.BEREITS-ABGEGEBEN.txt', '*.KUERZEL-UNBEKANNT.txt')
         }
     )
 
-    targets = @(
-        @{
-            path               = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung - Jahrgangsordner/SchuelerMaterial/docs/archive'
-            createIfMissing    = $true
-            preserveSubfolders = $false
-        }
-    )
-
-    aufgabenRoot = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung - Jahrgangsordner/SchuelerMaterial/docs/Aufgaben'
+    aufgabenRoot = '{material}/docs/Aufgaben'
 
     namingConventions = @(
         @{
@@ -45,11 +44,24 @@
         message        = 'Deine Datei "{fileName}" entspricht nicht dem vorgegebenen Namensschema initialen[_v<version>]_praefix_suffix_aufgabennummer (z. B. pke_Java_Suffix_abc oder bei einer erneuten Abgabe pke_v2_Java_Suffix_abc). Bitte benenne die Datei entsprechend um und lade sie erneut hoch.'
     }
 
+    duplicateHint = @{
+        enabled        = $true
+        fileNameSuffix = '.BEREITS-ABGEGEBEN.txt'
+        message        = 'Deine Datei "{fileName}" wurde bereits abgegeben. Falls es sich um eine neue Version handelt, benenne sie bitte mit Versionsangabe um, z. B. "{suggestedName}", und lade sie erneut hoch.'
+    }
+
+    minFileAgeMinutes = 2
+
+    copyRetry = @{
+        count        = 2
+        delaySeconds = 5
+    }
+
     reviewMarker = @{
         enabled              = $true
         pattern              = '_k-[A-Za-z0-9]+$'
         korrigiertFolderName = 'Korrigiert'
-        kuerzelRoutesFile    = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung - Jahrgangsordner/SchuelerMaterial/_DocFlowEngine-Shared/kuerzel-routes.txt'
+        kuerzelRoutesFile    = '{shared}/kuerzel-routes.txt'
     }
 
     unknownKuerzelHint = @{
@@ -57,17 +69,17 @@
         message = 'Die Datei "{fileName}" ist als Korrektur markiert, aber für das im Dateinamen erkannte Kürzel "{kuerzel}" ist noch kein Schülerordner bekannt. Bitte prüfen, oder den Schüler einmal regulär hochladen lassen, damit es automatisch registriert wird.'
     }
 
-    projectRoutesFile     = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung - Jahrgangsordner/SchuelerMaterial/_DocFlowEngine-Shared/project-routes.txt'
+    projectRoutesFile     = '{shared}/project-routes.txt'
     projectRoutesSeedFile = './config/project-routes.txt'
 
     defaultNameFormat = '{date}_{originalName}'
-    stateFile         = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung - Jahrgangsordner/SchuelerMaterial/_DocFlowEngine-Shared/.docflow-state.json'
+    stateFile         = '{shared}/.docflow-state.json'
 
-    lockFile           = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung - Jahrgangsordner/SchuelerMaterial/_DocFlowEngine-Shared/.docflow-lock'
+    lockFile           = '{shared}/.docflow-lock'
     lockTimeoutMinutes = 15
 
     log = @{
         level = 'Info'
-        file  = 'C:/Users/p0*/OneDrive - D*/IT-Ausbildung - Jahrgangsordner/SchuelerMaterial/_DocFlowEngine-Shared/docflow.log'
+        file  = '{shared}/docflow.log'
     }
 }
