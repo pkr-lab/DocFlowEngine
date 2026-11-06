@@ -15,7 +15,7 @@
         }
     )
 
-    aufgabenRoot = '{material}/docs/Aufgaben'
+    aufgabenRoot = '{material}/Aufgaben'
 
     namingConventions = @(
         @{
