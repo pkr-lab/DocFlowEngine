@@ -229,7 +229,7 @@ function Find-DocFlowExistingSubmission {
         return $null
     }
 
-    $pattern = '^\d{8}(?:\d{6})?_' + [regex]::Escape($File.Name) + '$'
+    $pattern = $Script:DatePrefixPattern + [regex]::Escape($File.Name) + '$'
     return Get-ChildItem -LiteralPath $TargetDirectory -File -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -match $pattern } |
         Select-Object -First 1
@@ -251,12 +251,12 @@ function Get-DocFlowSuggestedVersionName {
 
     $candidates = @(Get-ChildItem -LiteralPath $File.DirectoryName -File -ErrorAction SilentlyContinue | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) })
     if ($TargetDirectory -and (Test-Path -LiteralPath $TargetDirectory)) {
-        $candidates += @(Get-ChildItem -LiteralPath $TargetDirectory -File -ErrorAction SilentlyContinue | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) -replace '^\d{8}(?:\d{6})?_', '' })
+        $candidates += @(Get-ChildItem -LiteralPath $TargetDirectory -File -ErrorAction SilentlyContinue | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) -replace $Script:DatePrefixPattern, '' })
     }
 
     $highestVersion = $parts.Version
     foreach ($candidate in $candidates) {
-        $candidateParts = Get-DocFlowSubmissionParts -Name ($candidate -replace '_k-[A-Za-z0-9]+$', '') -Rules $Rules
+        $candidateParts = Get-DocFlowSubmissionParts -Name ($candidate -replace $Script:DefaultReviewMarkerPattern, '') -Rules $Rules
         if ($candidateParts -and
             $candidateParts.Initials -eq $parts.Initials -and
             $candidateParts.Praefix -eq $parts.Praefix -and
