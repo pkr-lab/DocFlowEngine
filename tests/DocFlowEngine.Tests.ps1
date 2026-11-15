@@ -1291,6 +1291,8 @@ Describe 'Get-DocFlowNameProposal' {
     }
 
     It "'<Name>' (<Registry>) wird zu '<Stem>'" -ForEach @(
+        @{ Name = 'pke Java Python Streams 1'; Registry = 'pairs'; Known = $null; Stem = 'pke_PLATZHALTER_PLATZHALTER_1'; Compliant = $false; Version = 0; Placeholder = $true; Notes = @('Präfix/Suffix mehrdeutig', 'Initialen aus Dateinamen übernommen') }
+        @{ Name = 'pke Java Python Streams 1'; Registry = 'flat'; Known = $null; Stem = 'pke_PLATZHALTER_PLATZHALTER_1'; Compliant = $false; Version = 0; Placeholder = $true; Notes = @('Initialen aus Dateinamen übernommen') }
         @{ Name = 'pke_v2_Java_Arrays_abc'; Registry = 'pairs'; Known = $null; Stem = 'pke_v2_Java_Arrays_abc'; Compliant = $true; Version = 2; Placeholder = $false; Notes = @() }
         @{ Name = 'pke Java Arrays Blatt3'; Registry = 'pairs'; Known = $null; Stem = 'pke_Java_Arrays_Blatt3'; Compliant = $false; Version = 0; Placeholder = $false; Notes = @('Initialen aus Dateinamen übernommen') }
         @{ Name = 'pke Java ArrayList Arrays 4'; Registry = 'pairs'; Known = $null; Stem = 'pke_Java_ArrayList_4'; Compliant = $false; Version = 0; Placeholder = $false; Notes = @('Initialen aus Dateinamen übernommen') }
