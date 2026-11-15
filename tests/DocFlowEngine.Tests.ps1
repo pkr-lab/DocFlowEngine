@@ -1410,3 +1410,59 @@ $Extra
         $config.namingConventionHint.message | Should -Not -BeNullOrEmpty
     }
 }
+
+Describe 'New-DocFlowRunContext / Invoke-DocFlowCopyForward' {
+    BeforeEach {
+        $script:ctxRoot = Join-Path $TestDrive "ctx-$(New-Guid)"
+        $script:ctxStudent = Join-Path $script:ctxRoot 'quelle/pke'
+        $script:ctxShared = Join-Path $script:ctxRoot 'shared'
+        New-Item -Path $script:ctxStudent, $script:ctxShared -ItemType Directory -Force | Out-Null
+        Set-Content -Path (Join-Path $script:ctxShared 'project-routes.txt') -Value @('praefix=Java', 'suffix=Arrays')
+        Set-Content -Path (Join-Path $script:ctxStudent 'pke_Java_Arrays_1.pdf') -Value 'x'
+
+        $configPath = Join-Path $script:ctxRoot 'config.psd1'
+        @"
+@{
+    sources = @(@{ path = '$($script:ctxRoot)/quelle'; recursive = `$true; includePatterns = @('*.pdf'); excludePatterns = @() })
+    targets = @(@{ path = '$($script:ctxRoot)/archiv' })
+    aufgabenRoot = '$($script:ctxRoot)/aufgaben'
+    namingConventions = @(
+        @{
+            match  = '^(?<initials>[A-Za-z]+)(?<versiontag>_v[0-9]+)?_(?<praefix>[A-Za-z]+)_(?<suffix>[A-Za-z0-9]+)_(?<aufgabennummer>[A-Za-z0-9]+)$'
+            rename = '{initials}{versiontag}_{praefix}_{suffix}_{aufgabennummer}'
+        }
+    )
+    projectRoutesFile = '$($script:ctxShared)/project-routes.txt'
+    projectRoutesSeedFile = ''
+    reviewMarker = @{ kuerzelRoutesFile = '$($script:ctxShared)/kuerzel-routes.txt' }
+    minFileAgeMinutes = 0
+    stateFile = '$($script:ctxShared)/state.json'
+}
+"@ | Set-Content -Path $configPath
+        $script:ctxConfig = Import-DocFlowConfig -Path $configPath
+    }
+
+    It 'bündelt Zustand, aufgelöste Pfade, Whitelist und Kürzel-Registry' {
+        $context = New-DocFlowRunContext -Config $script:ctxConfig
+
+        $context.StatePath | Should -Be (Join-Path $script:ctxShared 'state.json')
+        $context.State.processed.Count | Should -Be 0
+        $context.AufgabenRoot | Should -Be (Join-Path $script:ctxRoot 'aufgaben')
+        $context.RegistryFilePath | Should -Be (Join-Path $script:ctxShared 'project-routes.txt')
+        Test-DocFlowPraefixSuffixKnown -Registry $context.PraefixSuffixRegistry -Praefix 'Java' -Suffix 'Arrays' | Should -BeTrue
+        $context.KuerzelRoutesFilePath | Should -Be (Join-Path $script:ctxShared 'kuerzel-routes.txt')
+        $context.KuerzelRoutes.Count | Should -Be 0
+        $context.ExcludePaths | Should -Contain "$($script:ctxRoot)/archiv"
+        $context.ExcludePaths | Should -Contain (Join-Path $script:ctxRoot 'aufgaben')
+    }
+
+    It 'kopiert mit Konfiguration und Laufkontext wie Copy-NewFiles' {
+        $context = New-DocFlowRunContext -Config $script:ctxConfig
+
+        Invoke-DocFlowCopyForward -Config $script:ctxConfig -Context $context
+
+        Test-Path (Join-Path $script:ctxRoot 'aufgaben/Java/Arrays/pke_Java_Arrays_1.pdf') | Should -BeTrue
+        $context.State.processed.Count | Should -Be 1
+        $context.KuerzelRoutes['pke'] | Should -Be $script:ctxStudent
+    }
+}
