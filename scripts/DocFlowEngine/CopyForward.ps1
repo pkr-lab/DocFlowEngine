@@ -186,6 +186,128 @@ function Write-DocFlowResubmissionHint {
     Write-DocFlowDuplicateHint -File $File -HintConfig $DuplicateHint -SuggestedName $suggestedName
 }
 
+function Test-DocFlowKnownFileUnchanged {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] $Entry,
+        [Parameter(Mandatory)] [System.IO.FileInfo]$File
+    )
+
+    if ($null -eq $Entry['length'] -or $null -eq $Entry['lastWriteUtcSeconds']) {
+        $fingerprint = Get-DocFlowFileFingerprint -File $File
+        $Entry['length'] = $fingerprint.Length
+        $Entry['lastWriteUtcSeconds'] = $fingerprint.LastWriteUtcSeconds
+        return $true
+    }
+
+    return (Test-DocFlowSameFileVersion -Entry $Entry -File $File)
+}
+
+function Resolve-DocFlowAufgabenRoute {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [System.IO.FileInfo]$File,
+        [PSCustomObject]$PraefixSuffix,
+        [Parameter(Mandatory)] [string]$AufgabenRoot,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [array]$Rules,
+        [hashtable]$PraefixSuffixRegistry,
+        [string]$RegistryFilePath,
+        [hashtable]$NamingConventionHint,
+        [hashtable]$KuerzelRoutes,
+        [string]$KuerzelRoutesFilePath
+    )
+
+    $route = [PSCustomObject]@{ TargetPath = $null; Rejected = $false }
+
+    $isKnown = $false
+    if ($PraefixSuffix) {
+        $isKnown = (-not $RegistryFilePath) -or (Test-DocFlowPraefixSuffixKnown -Registry $PraefixSuffixRegistry -Praefix $PraefixSuffix.Praefix -Suffix $PraefixSuffix.Suffix)
+    }
+
+    if ($isKnown) {
+        if ($KuerzelRoutes) {
+            $initials = Get-FileInitials -File $File -Rules $Rules
+            if ($initials) {
+                Register-Kuerzel -Routes $KuerzelRoutes -RoutesFilePath $KuerzelRoutesFilePath -Kuerzel $initials -SourcePath $File.DirectoryName
+            }
+        }
+
+        $route.TargetPath = Join-Path (Join-Path $AufgabenRoot $PraefixSuffix.Praefix) $PraefixSuffix.Suffix
+        return $route
+    }
+
+    if (-not ($NamingConventionHint -and $NamingConventionHint.enabled)) {
+        return $route
+    }
+
+    if ($PraefixSuffix) {
+        $reason = Get-DocFlowWhitelistRejectionReason -PraefixSuffix $PraefixSuffix -Registry $PraefixSuffixRegistry
+        Write-Log -Level Warning -Message "Datei '$($File.Name)': $reason in der Whitelist '$RegistryFilePath' eingetragen."
+    } else {
+        Write-Log -Level Warning -Message "Datei '$($File.Name)' passt nicht zum Schema initialen[_v<version>]_praefix_suffix_aufgabennummer (nur Buchstaben/Ziffern, keine Leerzeichen, Bindestriche oder Umlaute)."
+    }
+    Write-NamingConventionHint -File $File -HintConfig $NamingConventionHint -PraefixSuffix $PraefixSuffix
+    $route.Rejected = $true
+    return $route
+}
+
+function Copy-DocFlowFileToTargets {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [System.IO.FileInfo]$File,
+        [Parameter(Mandatory)] [array]$Targets,
+        [Parameter(Mandatory)] [string]$TargetFileName,
+        [Parameter(Mandatory)] [string]$SourceRoot,
+        [int]$RetryCount = 2,
+        [int]$RetryDelaySeconds = 5
+    )
+
+    $result = [PSCustomObject]@{ Succeeded = $true; TargetPaths = @() }
+
+    foreach ($target in $Targets) {
+        $destinationDirectory = $target.path
+        if ($target.preserveSubfolders) {
+            $relative = Get-DocFlowRelativePath -BasePath $SourceRoot -FullPath $File.DirectoryName
+            if ($relative -and $relative -ne '.') {
+                $destinationDirectory = Join-Path $destinationDirectory $relative
+            }
+        }
+
+        if (-not (Test-Path -LiteralPath $destinationDirectory)) {
+            if ($Script:DryRun) {
+                Write-Log -Level Info -Message "[DryRun] Verzeichnis würde erstellt: $destinationDirectory"
+            } else {
+                Write-Log -Level Info -Message "Erstelle Verzeichnis: $destinationDirectory"
+                try {
+                    New-Item -ItemType Directory -Path $destinationDirectory -Force -ErrorAction Stop | Out-Null
+                } catch {
+                    Write-Log -Level Error -Message "Verzeichnis konnte nicht erstellt werden: '$destinationDirectory' ($($_.Exception.Message)). '$($File.Name)' wird beim nächsten Lauf erneut versucht."
+                    $result.Succeeded = $false
+                    continue
+                }
+            }
+        }
+
+        $destinationPath = Join-Path $destinationDirectory $TargetFileName
+
+        if (Test-Path -LiteralPath $destinationPath) {
+            Write-Log -Level Warning -Message "Zieldatei existiert bereits, überspringe Kopie: '$destinationPath'"
+        } elseif ($Script:DryRun) {
+            Write-Log -Level Info -Message "[DryRun] Datei würde kopiert: '$($File.FullName)' -> '$destinationPath'"
+        } else {
+            Write-Log -Level Info -Message "Kopiere Datei: '$($File.FullName)' -> '$destinationPath'"
+            if (-not (Copy-DocFlowFileWithRetry -Source $File.FullName -Destination $destinationPath -RetryCount $RetryCount -RetryDelaySeconds $RetryDelaySeconds)) {
+                $result.Succeeded = $false
+                continue
+            }
+        }
+
+        $result.TargetPaths += $destinationPath
+    }
+
+    return $result
+}
+
 function Copy-NewFiles {
     [CmdletBinding()]
     param(
@@ -255,16 +377,7 @@ function Copy-NewFiles {
                 }
 
                 if ($State.processed.ContainsKey($sourceKey)) {
-                    $entry = $State.processed[$sourceKey]
-                    if ($null -eq $entry['length'] -or $null -eq $entry['lastWriteUtcSeconds']) {
-                        $fingerprint = Get-DocFlowFileFingerprint -File $item
-                        $entry['length'] = $fingerprint.Length
-                        $entry['lastWriteUtcSeconds'] = $fingerprint.LastWriteUtcSeconds
-                        $alreadyProcessedCount++
-                        continue
-                    }
-
-                    if (Test-DocFlowSameFileVersion -Entry $entry -File $item) {
+                    if (Test-DocFlowKnownFileUnchanged -Entry $State.processed[$sourceKey] -File $item) {
                         $alreadyProcessedCount++
                         continue
                     }
@@ -291,35 +404,12 @@ function Copy-NewFiles {
                 $routedToAufgaben = $false
 
                 if ($AufgabenRoot) {
-                    $praefixSuffixValid = $false
-                    if ($praefixSuffix) {
-                        if ($RegistryFilePath) {
-                            $praefixSuffixValid = Test-DocFlowPraefixSuffixKnown -Registry $PraefixSuffixRegistry -Praefix $praefixSuffix.Praefix -Suffix $praefixSuffix.Suffix
-                        } else {
-                            $praefixSuffixValid = $true
-                        }
-                    }
-
-                    if ($praefixSuffixValid) {
-                        if ($KuerzelRoutes) {
-                            $initials = Get-FileInitials -File $item -Rules $Rules
-                            if ($initials) {
-                                Register-Kuerzel -Routes $KuerzelRoutes -RoutesFilePath $KuerzelRoutesFilePath -Kuerzel $initials -SourcePath $item.DirectoryName
-                            }
-                        }
-
-                        $routedTargetPath = Join-Path (Join-Path $AufgabenRoot $praefixSuffix.Praefix) $praefixSuffix.Suffix
-                        $routedToAufgaben = $true
-                    } elseif ($NamingConventionHint -and $NamingConventionHint.enabled) {
-                        if ($praefixSuffix) {
-                            $reason = Get-DocFlowWhitelistRejectionReason -PraefixSuffix $praefixSuffix -Registry $PraefixSuffixRegistry
-                            Write-Log -Level Warning -Message "Datei '$($item.Name)': $reason in der Whitelist '$RegistryFilePath' eingetragen."
-                        } else {
-                            Write-Log -Level Warning -Message "Datei '$($item.Name)' passt nicht zum Schema initialen[_v<version>]_praefix_suffix_aufgabennummer (nur Buchstaben/Ziffern, keine Leerzeichen, Bindestriche oder Umlaute)."
-                        }
-                        Write-NamingConventionHint -File $item -HintConfig $NamingConventionHint -PraefixSuffix $praefixSuffix
+                    $route = Resolve-DocFlowAufgabenRoute -File $item -PraefixSuffix $praefixSuffix -AufgabenRoot $AufgabenRoot -Rules $Rules -PraefixSuffixRegistry $PraefixSuffixRegistry -RegistryFilePath $RegistryFilePath -NamingConventionHint $NamingConventionHint -KuerzelRoutes $KuerzelRoutes -KuerzelRoutesFilePath $KuerzelRoutesFilePath
+                    if ($route.Rejected) {
                         continue
                     }
+                    $routedTargetPath = $route.TargetPath
+                    $routedToAufgaben = [bool]$route.TargetPath
                 }
 
                 if (-not $routedTargetPath -and $CategoryRoutes.Count -gt 0) {
@@ -354,55 +444,12 @@ function Copy-NewFiles {
                     }
                 }
 
-                $targetPaths = @()
-                $allCopiesSucceeded = $true
-
-                foreach ($target in $effectiveTargets) {
-                    $destinationDirectory = $target.path
-                    if ($target.preserveSubfolders) {
-                        $relative = Get-DocFlowRelativePath -BasePath $resolvedSourcePath -FullPath $item.DirectoryName
-                        if ($relative -and $relative -ne '.') {
-                            $destinationDirectory = Join-Path $destinationDirectory $relative
-                        }
-                    }
-
-                    if (-not (Test-Path -LiteralPath $destinationDirectory)) {
-                        if ($Script:DryRun) {
-                            Write-Log -Level Info -Message "[DryRun] Verzeichnis würde erstellt: $destinationDirectory"
-                        } else {
-                            Write-Log -Level Info -Message "Erstelle Verzeichnis: $destinationDirectory"
-                            try {
-                                New-Item -ItemType Directory -Path $destinationDirectory -Force -ErrorAction Stop | Out-Null
-                            } catch {
-                                Write-Log -Level Error -Message "Verzeichnis konnte nicht erstellt werden: '$destinationDirectory' ($($_.Exception.Message)). '$($item.Name)' wird beim nächsten Lauf erneut versucht."
-                                $allCopiesSucceeded = $false
-                                continue
-                            }
-                        }
-                    }
-
-                    $destinationPath = Join-Path $destinationDirectory $targetFileName
-
-                    if (Test-Path -LiteralPath $destinationPath) {
-                        Write-Log -Level Warning -Message "Zieldatei existiert bereits, überspringe Kopie: '$destinationPath'"
-                    } elseif ($Script:DryRun) {
-                        Write-Log -Level Info -Message "[DryRun] Datei würde kopiert: '$($item.FullName)' -> '$destinationPath'"
-                    } else {
-                        Write-Log -Level Info -Message "Kopiere Datei: '$($item.FullName)' -> '$destinationPath'"
-                        if (-not (Copy-DocFlowFileWithRetry -Source $item.FullName -Destination $destinationPath -RetryCount $RetryCount -RetryDelaySeconds $RetryDelaySeconds)) {
-                            $allCopiesSucceeded = $false
-                            continue
-                        }
-                    }
-
-                    $targetPaths += $destinationPath
-                }
-
-                if (-not $allCopiesSucceeded) {
+                $copyResult = Copy-DocFlowFileToTargets -File $item -Targets $effectiveTargets -TargetFileName $targetFileName -SourceRoot $resolvedSourcePath -RetryCount $RetryCount -RetryDelaySeconds $RetryDelaySeconds
+                if (-not $copyResult.Succeeded) {
                     continue
                 }
 
-                Complete-DocFlowProcessedFile -State $State -SourceKey $sourceKey -File $item -TargetPaths $targetPaths -HintSuffixes $hintSuffixes
+                Complete-DocFlowProcessedFile -State $State -SourceKey $sourceKey -File $item -TargetPaths $copyResult.TargetPaths -HintSuffixes $hintSuffixes
             }
 
             if ($alreadyProcessedCount -gt 0) {
