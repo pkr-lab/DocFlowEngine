@@ -308,6 +308,231 @@ function Copy-DocFlowFileToTargets {
     return $result
 }
 
+function New-DocFlowRunContextObject {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [hashtable]$State,
+        [string]$StatePath = $null,
+        [string]$AufgabenRoot = $null,
+        [hashtable]$PraefixSuffixRegistry = $null,
+        [string]$RegistryFilePath = $null,
+        [hashtable]$KuerzelRoutes = $null,
+        [string]$KuerzelRoutesFilePath = $null,
+        [array]$ExcludePaths = @()
+    )
+
+    return [PSCustomObject]@{
+        State = $State
+        StatePath = $StatePath
+        AufgabenRoot = $AufgabenRoot
+        PraefixSuffixRegistry = $PraefixSuffixRegistry
+        RegistryFilePath = $RegistryFilePath
+        KuerzelRoutes = $KuerzelRoutes
+        KuerzelRoutesFilePath = $KuerzelRoutesFilePath
+        ExcludePaths = $ExcludePaths
+    }
+}
+
+function New-DocFlowRunContext {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [hashtable]$Config
+    )
+
+    $statePath = Resolve-PathOrAbsolute -PathValue $Config.stateFile
+    $state = Import-DocFlowState -StatePath $statePath
+
+    $aufgabenRoot = $null
+    if ($Config.aufgabenRoot) {
+        $aufgabenRoot = Resolve-PathOrAbsolute -PathValue $Config.aufgabenRoot
+    }
+
+    $registryFilePath = $null
+    $praefixSuffixRegistry = [ordered]@{
+        Praefixe = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        Suffixe = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    }
+    if ($Config.projectRoutesFile) {
+        $registryFilePath = Resolve-PathOrAbsolute -PathValue $Config.projectRoutesFile
+
+        if ($Config.projectRoutesSeedFile) {
+            $seedFilePath = Resolve-PathOrAbsolute -PathValue $Config.projectRoutesSeedFile
+            Sync-ProjectRoutesFromSeed -SeedPath $seedFilePath -TargetPath $registryFilePath
+        }
+
+        $praefixSuffixRegistry = Get-PraefixSuffixRegistry -Path $registryFilePath
+    }
+
+    $kuerzelRoutesFilePath = $null
+    $kuerzelRoutes = @{}
+    if ($Config.reviewMarker.kuerzelRoutesFile) {
+        $kuerzelRoutesFilePath = Resolve-PathOrAbsolute -PathValue $Config.reviewMarker.kuerzelRoutesFile
+        $kuerzelRoutes = Get-KuerzelRoutes -Path $kuerzelRoutesFilePath
+    }
+
+    $excludePaths = @(@($Config.targets) | Where-Object { $_ } | ForEach-Object { $_.path })
+    if ($aufgabenRoot) {
+        $excludePaths += $aufgabenRoot
+    }
+
+    return New-DocFlowRunContextObject -State $state -StatePath $statePath -AufgabenRoot $aufgabenRoot -PraefixSuffixRegistry $praefixSuffixRegistry -RegistryFilePath $registryFilePath -KuerzelRoutes $kuerzelRoutes -KuerzelRoutesFilePath $kuerzelRoutesFilePath -ExcludePaths $excludePaths
+}
+
+function Invoke-DocFlowCopyForward {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [hashtable]$Config,
+        [Parameter(Mandatory)] [PSCustomObject]$Context
+    )
+
+    $sources = @($Config.sources)
+    $targets = @($Config.targets)
+    $rules = @($Config.namingConventions)
+    $defaultNameFormat = $Config.defaultNameFormat
+    $categoryRoutes = @(if ($Config.categoryRoutes) { $Config.categoryRoutes })
+    $namingConventionHint = $Config.namingConventionHint
+    $duplicateHint = $Config.duplicateHint
+    $minFileAgeMinutes = [double]$Config.minFileAgeMinutes
+    $retryCount = [int]$Config.copyRetry.count
+    $retryDelaySeconds = [int]$Config.copyRetry.delaySeconds
+    $korrigiertFolderName = $Config.reviewMarker.korrigiertFolderName
+    $reviewMarkerPattern = if ($Config.reviewMarker.pattern) { $Config.reviewMarker.pattern } else { $Script:DefaultReviewMarkerPattern }
+
+    $state = $Context.State
+    $aufgabenRoot = $Context.AufgabenRoot
+    $praefixSuffixRegistry = $Context.PraefixSuffixRegistry
+    $registryFilePath = $Context.RegistryFilePath
+    $kuerzelRoutes = $Context.KuerzelRoutes
+    $kuerzelRoutesFilePath = $Context.KuerzelRoutesFilePath
+    $excludePaths = @($Context.ExcludePaths)
+
+    $hintSuffixes = @()
+    if ($namingConventionHint -and $namingConventionHint.fileNameSuffix) {
+        $hintSuffixes += $namingConventionHint.fileNameSuffix
+    }
+    if ($duplicateHint -and $duplicateHint.fileNameSuffix) {
+        $hintSuffixes += $duplicateHint.fileNameSuffix
+    }
+
+    foreach ($source in $sources) {
+        $resolvedSourcePaths = Resolve-SourcePaths -PathValue $source.path
+        if ($resolvedSourcePaths.Count -eq 0) {
+            Write-Log -Level Warning -Message "Quellverzeichnis '$($source.path)' existiert nicht oder wurde nicht gefunden. Überspringe."
+            continue
+        }
+
+        foreach ($resolvedSourcePath in $resolvedSourcePaths) {
+            if ($hintSuffixes.Count -gt 0) {
+                Remove-DocFlowOrphanedHintFiles -Directory $resolvedSourcePath -HintSuffixes $hintSuffixes -Recurse ([bool]$source.recursive)
+            }
+
+            $items = Get-SourceFiles -Source $source -ResolvedPath $resolvedSourcePath
+            Write-Log -Level Info -Message "Gefundene Dateien in '$resolvedSourcePath': $($items.Count)"
+            $alreadyProcessedCount = 0
+
+            foreach ($item in $items) {
+                if (Test-PathExcluded -FullName $item.FullName -ExcludePaths $excludePaths) {
+                    continue
+                }
+
+                if (Test-DocFlowInsideNamedFolder -DirectoryName $item.DirectoryName -FolderName $korrigiertFolderName) {
+                    continue
+                }
+
+                if (Test-DocFlowHintFileName -Name $item.Name -HintSuffixes $hintSuffixes) {
+                    continue
+                }
+
+                $relativeSourcePath = Get-DocFlowRelativePath -BasePath $resolvedSourcePath -FullPath $item.FullName
+                $sourceKey = ("$($source.path)|$relativeSourcePath").ToLowerInvariant()
+                $praefixSuffix = $null
+                if ($aufgabenRoot) {
+                    $praefixSuffix = Get-FilePraefixSuffix -File $item -Rules $rules
+                }
+
+                if ($state.processed.ContainsKey($sourceKey)) {
+                    if (Test-DocFlowKnownFileUnchanged -Entry $state.processed[$sourceKey] -File $item) {
+                        $alreadyProcessedCount++
+                        continue
+                    }
+
+                    if (-not (Test-DocFlowFileReady -File $item -MinAgeMinutes $minFileAgeMinutes)) {
+                        continue
+                    }
+
+                    Write-Log -Level Warning -Message "Datei '$($item.Name)' wurde nach der Abgabe unter gleichem Namen überschrieben. Sie wird nicht erneut kopiert; der Schüler soll eine Versionsangabe (_v2_ usw.) verwenden."
+                    $suggestionDirectory = if ($praefixSuffix) { Join-Path (Join-Path $aufgabenRoot $praefixSuffix.Praefix) $praefixSuffix.Suffix } else { $null }
+                    Write-DocFlowResubmissionHint -File $item -Rules $rules -DuplicateHint $duplicateHint -TargetDirectory $suggestionDirectory -ReviewMarkerPattern $reviewMarkerPattern
+                    continue
+                }
+
+                if (-not (Test-DocFlowFileReady -File $item -MinAgeMinutes $minFileAgeMinutes)) {
+                    continue
+                }
+
+                $targetFileName = Get-TargetFileName -File $item -Rules $rules -DefaultFormat $defaultNameFormat
+
+                $effectiveTargets = $targets
+                $routingActive = $categoryRoutes.Count -gt 0
+                $routedTargetPath = $null
+                $routedToAufgaben = $false
+
+                if ($aufgabenRoot) {
+                    $route = Resolve-DocFlowAufgabenRoute -File $item -PraefixSuffix $praefixSuffix -AufgabenRoot $aufgabenRoot -Rules $rules -PraefixSuffixRegistry $praefixSuffixRegistry -RegistryFilePath $registryFilePath -NamingConventionHint $namingConventionHint -KuerzelRoutes $kuerzelRoutes -KuerzelRoutesFilePath $kuerzelRoutesFilePath
+                    if ($route.Rejected) {
+                        continue
+                    }
+                    $routedTargetPath = $route.TargetPath
+                    $routedToAufgaben = [bool]$route.TargetPath
+                }
+
+                if (-not $routedTargetPath -and $categoryRoutes.Count -gt 0) {
+                    $leadingLetters = Get-FileCategory -File $item -Rules $rules
+                    if ($leadingLetters) {
+                        $routedTargetPath = Resolve-CategoryTarget -LeadingLetters $leadingLetters -CategoryRoutes $categoryRoutes
+                    }
+                }
+
+                if ($routedTargetPath) {
+                    $effectiveTargets = @(@{ path = (Resolve-PathOrAbsolute -PathValue $routedTargetPath); preserveSubfolders = $false })
+                } elseif ($routingActive) {
+                    Write-Log -Level Warning -Message "Keine passende Kategorie-Zuordnung für '$($item.Name)' gefunden. Datei wird übersprungen."
+                    continue
+                } elseif (@($effectiveTargets).Count -eq 0) {
+                    Write-Log -Level Warning -Message "Kein Ziel für '$($item.Name)' ermittelbar (kein gültiges Präfix/Suffix-Routing, keine 'targets' konfiguriert). Datei wird übersprungen."
+                    continue
+                }
+
+                if ($routedToAufgaben) {
+                    $existingSubmission = Find-DocFlowExistingSubmission -File $item -TargetDirectory $effectiveTargets[0].path
+                    if ($existingSubmission) {
+                        if ($existingSubmission.Length -eq $item.Length) {
+                            Write-Log -Level Info -Message "Datei '$($item.Name)' liegt bereits identisch in '$($existingSubmission.FullName)'. Wird als verarbeitet übernommen."
+                            Complete-DocFlowProcessedFile -State $state -SourceKey $sourceKey -File $item -TargetPaths @($existingSubmission.FullName) -HintSuffixes $hintSuffixes
+                            continue
+                        }
+
+                        Write-Log -Level Warning -Message "Datei '$($item.Name)' wurde bereits abgegeben ('$($existingSubmission.Name)'). Sie wird nicht erneut kopiert; der Schüler soll eine Versionsangabe (_v2_ usw.) verwenden."
+                        Write-DocFlowResubmissionHint -File $item -Rules $rules -DuplicateHint $duplicateHint -TargetDirectory $effectiveTargets[0].path -ReviewMarkerPattern $reviewMarkerPattern
+                        continue
+                    }
+                }
+
+                $copyResult = Copy-DocFlowFileToTargets -File $item -Targets $effectiveTargets -TargetFileName $targetFileName -SourceRoot $resolvedSourcePath -RetryCount $retryCount -RetryDelaySeconds $retryDelaySeconds
+                if (-not $copyResult.Succeeded) {
+                    continue
+                }
+
+                Complete-DocFlowProcessedFile -State $state -SourceKey $sourceKey -File $item -TargetPaths $copyResult.TargetPaths -HintSuffixes $hintSuffixes
+            }
+
+            if ($alreadyProcessedCount -gt 0) {
+                Write-Log -Level Info -Message "Bereits in früheren Läufen verarbeitet und daher übersprungen: $alreadyProcessedCount"
+            }
+        }
+    }
+}
+
 function Copy-NewFiles {
     [CmdletBinding()]
     param(
@@ -332,129 +557,19 @@ function Copy-NewFiles {
         [int]$RetryDelaySeconds = 5
     )
 
-    $hintSuffixes = @()
-    if ($NamingConventionHint -and $NamingConventionHint.fileNameSuffix) {
-        $hintSuffixes += $NamingConventionHint.fileNameSuffix
+    $config = @{
+        sources = $Sources
+        targets = $Targets
+        namingConventions = $Rules
+        defaultNameFormat = $DefaultNameFormat
+        categoryRoutes = $CategoryRoutes
+        namingConventionHint = $NamingConventionHint
+        duplicateHint = $DuplicateHint
+        minFileAgeMinutes = $MinFileAgeMinutes
+        copyRetry = @{ count = $RetryCount; delaySeconds = $RetryDelaySeconds }
+        reviewMarker = @{ korrigiertFolderName = $KorrigiertFolderName; pattern = $ReviewMarkerPattern }
     }
-    if ($DuplicateHint -and $DuplicateHint.fileNameSuffix) {
-        $hintSuffixes += $DuplicateHint.fileNameSuffix
-    }
+    $context = New-DocFlowRunContextObject -State $State -AufgabenRoot $AufgabenRoot -PraefixSuffixRegistry $PraefixSuffixRegistry -RegistryFilePath $RegistryFilePath -KuerzelRoutes $KuerzelRoutes -KuerzelRoutesFilePath $KuerzelRoutesFilePath -ExcludePaths $ExcludePaths
 
-    foreach ($source in $Sources) {
-        $resolvedSourcePaths = Resolve-SourcePaths -PathValue $source.path
-        if ($resolvedSourcePaths.Count -eq 0) {
-            Write-Log -Level Warning -Message "Quellverzeichnis '$($source.path)' existiert nicht oder wurde nicht gefunden. Überspringe."
-            continue
-        }
-
-        foreach ($resolvedSourcePath in $resolvedSourcePaths) {
-            if ($hintSuffixes.Count -gt 0) {
-                Remove-DocFlowOrphanedHintFiles -Directory $resolvedSourcePath -HintSuffixes $hintSuffixes -Recurse ([bool]$source.recursive)
-            }
-
-            $items = Get-SourceFiles -Source $source -ResolvedPath $resolvedSourcePath
-            Write-Log -Level Info -Message "Gefundene Dateien in '$resolvedSourcePath': $($items.Count)"
-            $alreadyProcessedCount = 0
-
-            foreach ($item in $items) {
-                if (Test-PathExcluded -FullName $item.FullName -ExcludePaths $ExcludePaths) {
-                    continue
-                }
-
-                if (Test-DocFlowInsideNamedFolder -DirectoryName $item.DirectoryName -FolderName $KorrigiertFolderName) {
-                    continue
-                }
-
-                if (Test-DocFlowHintFileName -Name $item.Name -HintSuffixes $hintSuffixes) {
-                    continue
-                }
-
-                $relativeSourcePath = Get-DocFlowRelativePath -BasePath $resolvedSourcePath -FullPath $item.FullName
-                $sourceKey = ("$($source.path)|$relativeSourcePath").ToLowerInvariant()
-                $praefixSuffix = $null
-                if ($AufgabenRoot) {
-                    $praefixSuffix = Get-FilePraefixSuffix -File $item -Rules $Rules
-                }
-
-                if ($State.processed.ContainsKey($sourceKey)) {
-                    if (Test-DocFlowKnownFileUnchanged -Entry $State.processed[$sourceKey] -File $item) {
-                        $alreadyProcessedCount++
-                        continue
-                    }
-
-                    if (-not (Test-DocFlowFileReady -File $item -MinAgeMinutes $MinFileAgeMinutes)) {
-                        continue
-                    }
-
-                    Write-Log -Level Warning -Message "Datei '$($item.Name)' wurde nach der Abgabe unter gleichem Namen überschrieben. Sie wird nicht erneut kopiert; der Schüler soll eine Versionsangabe (_v2_ usw.) verwenden."
-                    $suggestionDirectory = if ($praefixSuffix) { Join-Path (Join-Path $AufgabenRoot $praefixSuffix.Praefix) $praefixSuffix.Suffix } else { $null }
-                    Write-DocFlowResubmissionHint -File $item -Rules $Rules -DuplicateHint $DuplicateHint -TargetDirectory $suggestionDirectory -ReviewMarkerPattern $ReviewMarkerPattern
-                    continue
-                }
-
-                if (-not (Test-DocFlowFileReady -File $item -MinAgeMinutes $MinFileAgeMinutes)) {
-                    continue
-                }
-
-                $targetFileName = Get-TargetFileName -File $item -Rules $Rules -DefaultFormat $DefaultNameFormat
-
-                $effectiveTargets = $Targets
-                $routingActive = $CategoryRoutes.Count -gt 0
-                $routedTargetPath = $null
-                $routedToAufgaben = $false
-
-                if ($AufgabenRoot) {
-                    $route = Resolve-DocFlowAufgabenRoute -File $item -PraefixSuffix $praefixSuffix -AufgabenRoot $AufgabenRoot -Rules $Rules -PraefixSuffixRegistry $PraefixSuffixRegistry -RegistryFilePath $RegistryFilePath -NamingConventionHint $NamingConventionHint -KuerzelRoutes $KuerzelRoutes -KuerzelRoutesFilePath $KuerzelRoutesFilePath
-                    if ($route.Rejected) {
-                        continue
-                    }
-                    $routedTargetPath = $route.TargetPath
-                    $routedToAufgaben = [bool]$route.TargetPath
-                }
-
-                if (-not $routedTargetPath -and $CategoryRoutes.Count -gt 0) {
-                    $leadingLetters = Get-FileCategory -File $item -Rules $Rules
-                    if ($leadingLetters) {
-                        $routedTargetPath = Resolve-CategoryTarget -LeadingLetters $leadingLetters -CategoryRoutes $CategoryRoutes
-                    }
-                }
-
-                if ($routedTargetPath) {
-                    $effectiveTargets = @(@{ path = (Resolve-PathOrAbsolute -PathValue $routedTargetPath); preserveSubfolders = $false })
-                } elseif ($routingActive) {
-                    Write-Log -Level Warning -Message "Keine passende Kategorie-Zuordnung für '$($item.Name)' gefunden. Datei wird übersprungen."
-                    continue
-                } elseif (@($effectiveTargets).Count -eq 0) {
-                    Write-Log -Level Warning -Message "Kein Ziel für '$($item.Name)' ermittelbar (kein gültiges Präfix/Suffix-Routing, keine 'targets' konfiguriert). Datei wird übersprungen."
-                    continue
-                }
-
-                if ($routedToAufgaben) {
-                    $existingSubmission = Find-DocFlowExistingSubmission -File $item -TargetDirectory $effectiveTargets[0].path
-                    if ($existingSubmission) {
-                        if ($existingSubmission.Length -eq $item.Length) {
-                            Write-Log -Level Info -Message "Datei '$($item.Name)' liegt bereits identisch in '$($existingSubmission.FullName)'. Wird als verarbeitet übernommen."
-                            Complete-DocFlowProcessedFile -State $State -SourceKey $sourceKey -File $item -TargetPaths @($existingSubmission.FullName) -HintSuffixes $hintSuffixes
-                            continue
-                        }
-
-                        Write-Log -Level Warning -Message "Datei '$($item.Name)' wurde bereits abgegeben ('$($existingSubmission.Name)'). Sie wird nicht erneut kopiert; der Schüler soll eine Versionsangabe (_v2_ usw.) verwenden."
-                        Write-DocFlowResubmissionHint -File $item -Rules $Rules -DuplicateHint $DuplicateHint -TargetDirectory $effectiveTargets[0].path -ReviewMarkerPattern $ReviewMarkerPattern
-                        continue
-                    }
-                }
-
-                $copyResult = Copy-DocFlowFileToTargets -File $item -Targets $effectiveTargets -TargetFileName $targetFileName -SourceRoot $resolvedSourcePath -RetryCount $RetryCount -RetryDelaySeconds $RetryDelaySeconds
-                if (-not $copyResult.Succeeded) {
-                    continue
-                }
-
-                Complete-DocFlowProcessedFile -State $State -SourceKey $sourceKey -File $item -TargetPaths $copyResult.TargetPaths -HintSuffixes $hintSuffixes
-            }
-
-            if ($alreadyProcessedCount -gt 0) {
-                Write-Log -Level Info -Message "Bereits in früheren Läufen verarbeitet und daher übersprungen: $alreadyProcessedCount"
-            }
-        }
-    }
+    Invoke-DocFlowCopyForward -Config $config -Context $context
 }
