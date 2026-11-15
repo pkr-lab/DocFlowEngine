@@ -195,7 +195,6 @@ function Copy-NewFiles {
         [Parameter(Mandatory)] [AllowEmptyCollection()] [array]$Rules,
         [Parameter(Mandatory)] [string]$DefaultNameFormat,
         [array]$CategoryRoutes = @(),
-        [hashtable]$ProjectRoutes = @{},
         [string]$AufgabenRoot = $null,
         [hashtable]$PraefixSuffixRegistry = $null,
         [string]$RegistryFilePath = $null,
@@ -287,7 +286,7 @@ function Copy-NewFiles {
                 $targetFileName = Get-TargetFileName -File $item -Rules $Rules -DefaultFormat $DefaultNameFormat
 
                 $effectiveTargets = $Targets
-                $routingActive = ($ProjectRoutes.Count -gt 0) -or ($CategoryRoutes.Count -gt 0)
+                $routingActive = $CategoryRoutes.Count -gt 0
                 $routedTargetPath = $null
                 $routedToAufgaben = $false
 
@@ -323,13 +322,6 @@ function Copy-NewFiles {
                     }
                 }
 
-                if (-not $routedTargetPath -and $ProjectRoutes.Count -gt 0) {
-                    $projectName = Get-FileProject -File $item -Rules $Rules
-                    if ($projectName) {
-                        $routedTargetPath = Resolve-ProjectTarget -ProjectName $projectName -ProjectRoutes $ProjectRoutes
-                    }
-                }
-
                 if (-not $routedTargetPath -and $CategoryRoutes.Count -gt 0) {
                     $leadingLetters = Get-FileCategory -File $item -Rules $Rules
                     if ($leadingLetters) {
@@ -340,7 +332,7 @@ function Copy-NewFiles {
                 if ($routedTargetPath) {
                     $effectiveTargets = @(@{ path = (Resolve-PathOrAbsolute -PathValue $routedTargetPath); preserveSubfolders = $false })
                 } elseif ($routingActive) {
-                    Write-Log -Level Warning -Message "Keine passende Projekt- oder Kategorie-Zuordnung für '$($item.Name)' gefunden. Datei wird übersprungen."
+                    Write-Log -Level Warning -Message "Keine passende Kategorie-Zuordnung für '$($item.Name)' gefunden. Datei wird übersprungen."
                     continue
                 } elseif (@($effectiveTargets).Count -eq 0) {
                     Write-Log -Level Warning -Message "Kein Ziel für '$($item.Name)' ermittelbar (kein gültiges Präfix/Suffix-Routing, keine 'targets' konfiguriert). Datei wird übersprungen."
