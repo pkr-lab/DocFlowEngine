@@ -124,7 +124,7 @@ function Copy-ReviewedFiles {
             $studentFolder = $KuerzelRoutes[$kuerzelKey]
             $korrigiertFolder = Join-Path $studentFolder $korrigiertFolderName
 
-            if (-not (Test-Path $korrigiertFolder)) {
+            if (-not (Test-Path -LiteralPath $korrigiertFolder)) {
                 if ($Script:DryRun) {
                     Write-Log -Level Info -Message "[DryRun] Verzeichnis würde erstellt: $korrigiertFolder"
                 } else {

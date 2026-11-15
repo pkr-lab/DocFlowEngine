@@ -5,7 +5,7 @@ function Get-SourceFiles {
         [Parameter(Mandatory)] [string]$ResolvedPath
     )
 
-    if (-not (Test-Path $ResolvedPath)) {
+    if (-not (Test-Path -LiteralPath $ResolvedPath)) {
         Write-Log -Level Warning -Message "Quellverzeichnis '$ResolvedPath' existiert nicht. Überspringe."
         return @()
     }
@@ -13,9 +13,9 @@ function Get-SourceFiles {
     $files = [ordered]@{}
     foreach ($pattern in $Source.includePatterns) {
         if ($Source.recursive) {
-            $items = Get-ChildItem -Path $ResolvedPath -Filter $pattern -File -Recurse -ErrorAction SilentlyContinue
+            $items = Get-ChildItem -LiteralPath $ResolvedPath -Filter $pattern -File -Recurse -ErrorAction SilentlyContinue
         } else {
-            $items = Get-ChildItem -Path $ResolvedPath -Filter $pattern -File -ErrorAction SilentlyContinue
+            $items = Get-ChildItem -LiteralPath $ResolvedPath -Filter $pattern -File -ErrorAction SilentlyContinue
         }
 
         foreach ($item in $items) {
@@ -374,7 +374,7 @@ function Copy-NewFiles {
                         }
                     }
 
-                    if (-not (Test-Path $destinationDirectory)) {
+                    if (-not (Test-Path -LiteralPath $destinationDirectory)) {
                         if ($Script:DryRun) {
                             Write-Log -Level Info -Message "[DryRun] Verzeichnis würde erstellt: $destinationDirectory"
                         } else {
@@ -391,7 +391,7 @@ function Copy-NewFiles {
 
                     $destinationPath = Join-Path $destinationDirectory $targetFileName
 
-                    if (Test-Path $destinationPath) {
+                    if (Test-Path -LiteralPath $destinationPath) {
                         Write-Log -Level Warning -Message "Zieldatei existiert bereits, überspringe Kopie: '$destinationPath'"
                     } elseif ($Script:DryRun) {
                         Write-Log -Level Info -Message "[DryRun] Datei würde kopiert: '$($item.FullName)' -> '$destinationPath'"

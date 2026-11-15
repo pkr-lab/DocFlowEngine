@@ -726,7 +726,7 @@ Describe 'Abgabe-Absicherung (Kopierwiederholung, Doppelabgabe, Schreibschutz, P
             Mock Copy-Item -ModuleName DocFlowEngine -MockWith {
                 $global:docflowCopyCalls++
                 if ($global:docflowCopyCalls -lt 3) { throw 'gesperrt' }
-                [System.IO.File]::Copy($Path, $Destination, $true)
+                [System.IO.File]::Copy($LiteralPath, $Destination, $true)
             }
             $sourceFile = Join-Path $script:src 'a.pdf'
             Set-Content -Path $sourceFile -Value 'inhalt'
@@ -743,7 +743,7 @@ Describe 'Abgabe-Absicherung (Kopierwiederholung, Doppelabgabe, Schreibschutz, P
             Should -Invoke Copy-Item -ModuleName DocFlowEngine -Times 3 -Exactly
             $script:state.processed.Count | Should -Be 0
 
-            Mock Copy-Item -ModuleName DocFlowEngine -MockWith { [System.IO.File]::Copy($Path, $Destination, $true) }
+            Mock Copy-Item -ModuleName DocFlowEngine -MockWith { [System.IO.File]::Copy($LiteralPath, $Destination, $true) }
             & $script:run
             $script:state.processed.Count | Should -Be 1
             @(Get-ChildItem -Path $script:arraysDir -File).Count | Should -Be 1
@@ -1093,5 +1093,24 @@ Describe 'Load-State / Save-State' {
 
         , $reloaded.processed['k'].targets | Should -BeOfType [array]
         @($reloaded.processed['k'].targets).Count | Should -Be 0
+    }
+}
+
+Describe 'Copy-NewFiles: Dateinamen mit eckigen Klammern' {
+    It 'kopiert Dateien und Unterordner mit [ ] im Namen wörtlich statt als Wildcard' {
+        $sourceDir = Join-Path $TestDrive "quelle-$(New-Guid)"
+        $studentDir = Join-Path $sourceDir 'Klasse [A]'
+        $targetDir = Join-Path $TestDrive "ziel-$(New-Guid)"
+        New-Item -Path $studentDir -ItemType Directory -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $studentDir 'Bericht [1].pdf') -Value 'dummy'
+        $sources = @(@{ path = $sourceDir; recursive = $true; includePatterns = @('*.pdf'); excludePatterns = @() })
+        $targets = @(@{ path = $targetDir; preserveSubfolders = $true })
+        $rules = @(@{ match = '^(?<name>.+)$'; rename = '{name}' })
+        $state = @{ processed = @{}; reviewedFiles = @{} }
+
+        Copy-NewFiles -Sources $sources -Targets $targets -State $state -Rules $rules -DefaultNameFormat '{originalName}' -RetryCount 0 -RetryDelaySeconds 0
+
+        Test-Path -LiteralPath (Join-Path (Join-Path $targetDir 'Klasse [A]') 'Bericht [1].pdf') | Should -BeTrue
+        $state.processed.Count | Should -Be 1
     }
 }
