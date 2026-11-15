@@ -240,7 +240,8 @@ function Get-DocFlowSuggestedVersionName {
     param(
         [Parameter(Mandatory)] [System.IO.FileInfo]$File,
         [Parameter(Mandatory)] [array]$Rules,
-        [string]$TargetDirectory
+        [string]$TargetDirectory,
+        [string]$ReviewMarkerPattern = $Script:DefaultReviewMarkerPattern
     )
 
     $originalName = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
@@ -256,7 +257,7 @@ function Get-DocFlowSuggestedVersionName {
 
     $highestVersion = $parts.Version
     foreach ($candidate in $candidates) {
-        $candidateParts = Get-DocFlowSubmissionParts -Name ($candidate -replace $Script:DefaultReviewMarkerPattern, '') -Rules $Rules
+        $candidateParts = Get-DocFlowSubmissionParts -Name ($candidate -replace $ReviewMarkerPattern, '') -Rules $Rules
         if ($candidateParts -and
             $candidateParts.Initials -eq $parts.Initials -and
             $candidateParts.Praefix -eq $parts.Praefix -and

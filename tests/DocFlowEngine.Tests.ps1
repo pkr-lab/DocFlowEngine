@@ -1039,3 +1039,33 @@ Describe 'Rename-ExistingAufgaben.ps1' {
         @($entry.targets).Count | Should -Be 0
     }
 }
+
+Describe 'Get-DocFlowSuggestedVersionName' {
+    BeforeAll {
+        $script:versionRules = @(
+            @{
+                match  = '^(?<initials>[A-Za-z]+)(?<versiontag>_v[0-9]+)?_(?<praefix>[A-Za-z]+)_(?<suffix>[A-Za-z0-9]+)_(?<aufgabennummer>[A-Za-z0-9]+)$'
+                rename = '{initials}{versiontag}_{praefix}_{suffix}_{aufgabennummer}'
+            }
+        )
+    }
+
+    BeforeEach {
+        $script:versionSource = Join-Path $TestDrive "src-$(New-Guid)"
+        $script:versionTarget = Join-Path $TestDrive "ziel-$(New-Guid)"
+        New-Item -Path $script:versionSource, $script:versionTarget -ItemType Directory -Force | Out-Null
+        $script:versionFile = New-Item -Path (Join-Path $script:versionSource 'pke_Java_Arrays_abc.pdf') -ItemType File -Force
+    }
+
+    It 'zählt korrigierte Versionen mit dem Standard-Korrekturmarker mit' {
+        New-Item -Path (Join-Path $script:versionTarget '20260101_pke_v3_Java_Arrays_abc_k-ahf.pdf') -ItemType File -Force | Out-Null
+
+        Get-DocFlowSuggestedVersionName -File $script:versionFile -Rules $script:versionRules -TargetDirectory $script:versionTarget | Should -Be 'pke_v4_Java_Arrays_abc.pdf'
+    }
+
+    It 'zählt korrigierte Versionen mit einem konfigurierten Korrekturmarker mit' {
+        New-Item -Path (Join-Path $script:versionTarget '20260101_pke_v3_Java_Arrays_abc_korr-ahf.pdf') -ItemType File -Force | Out-Null
+
+        Get-DocFlowSuggestedVersionName -File $script:versionFile -Rules $script:versionRules -TargetDirectory $script:versionTarget -ReviewMarkerPattern '_korr-[A-Za-z0-9]+$' | Should -Be 'pke_v4_Java_Arrays_abc.pdf'
+    }
+}
