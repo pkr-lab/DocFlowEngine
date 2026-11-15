@@ -31,31 +31,8 @@ function New-RenameResult {
 }
 
 if ($Undo) {
-    if (-not (Test-Path -LiteralPath $Undo)) {
-        throw "Undo-Datei '$Undo' wurde nicht gefunden."
-    }
-
-    $undoRows = @(Import-Csv -LiteralPath $Undo -Delimiter ';' | Where-Object { $_.Ausgefuehrt -eq 'ja' })
-    [array]::Reverse($undoRows)
-    $restored = 0
-    foreach ($row in $undoRows) {
-        if (-not (Test-Path -LiteralPath $row.NeuerPfad)) {
-            Write-Warning "Nicht mehr vorhanden, übersprungen: '$($row.NeuerPfad)'"
-            continue
-        }
-        if (Test-Path -LiteralPath $row.AlterPfad) {
-            Write-Warning "Alter Name ist bereits wieder belegt, übersprungen: '$($row.AlterPfad)'"
-            continue
-        }
-        try {
-            Rename-Item -LiteralPath $row.NeuerPfad -NewName (Split-Path -Path $row.AlterPfad -Leaf) -ErrorAction Stop
-            $restored++
-        } catch {
-            Write-Warning "Konnte '$($row.NeuerPfad)' nicht zurückbenennen: $($_.Exception.Message)"
-        }
-    }
-
-    Write-Host "$restored von $($undoRows.Count) Umbenennung(en) rückgängig gemacht."
+    $undoResult = Undo-DocFlowRename -ReportPath $Undo
+    Write-Host "$($undoResult.Restored) von $($undoResult.Total) Umbenennung(en) rückgängig gemacht."
     return
 }
 
@@ -73,12 +50,7 @@ if ($config.projectRoutesFile) {
 $kuerzelByFolder = @{}
 if ($config.reviewMarker.kuerzelRoutesFile) {
     $kuerzelRoutes = Get-KuerzelRoutes -Path (Resolve-PathOrAbsolute -PathValue $config.reviewMarker.kuerzelRoutesFile)
-    foreach ($kuerzel in $kuerzelRoutes.Keys) {
-        $folder = $kuerzelRoutes[$kuerzel].TrimEnd('\', '/')
-        if (-not $kuerzelByFolder.ContainsKey($folder)) {
-            $kuerzelByFolder[$folder] = $kuerzel
-        }
-    }
+    $kuerzelByFolder = ConvertTo-DocFlowKuerzelByFolder -KuerzelRoutes $kuerzelRoutes
 }
 
 $lockPath = $null
@@ -151,35 +123,7 @@ try {
         }
     }
 
-    $initialsByFolder = @{}
-    $initialsSourceByFolder = @{}
-    foreach ($group in ($files | Group-Object -Property DirectoryName)) {
-        $folder = $group.Name.TrimEnd('\', '/')
-        $compliantVotes = @{}
-        $guessedVotes = @{}
-        foreach ($file in $group.Group) {
-            $stemName = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
-            $parts = Get-DocFlowSubmissionParts -Name $stemName -Rules $config.namingConventions
-            if ($parts) {
-                $compliantVotes[$parts.Initials] = 1 + [int]$compliantVotes[$parts.Initials]
-                continue
-            }
-            $guess = Get-DocFlowNameProposal -Name $stemName -Rules $config.namingConventions -Registry $registry -Placeholder $Placeholder
-            if ($guess.Initials -and $guess.Initials -ne $Placeholder -and ($guess.Praefix -ne $Placeholder -or $guess.Suffix -ne $Placeholder)) {
-                $guessedVotes[$guess.Initials] = 1 + [int]$guessedVotes[$guess.Initials]
-            }
-        }
-        if ($compliantVotes.Count -gt 0) {
-            $initialsByFolder[$folder] = ($compliantVotes.GetEnumerator() | Sort-Object -Property Value -Descending | Select-Object -First 1).Key
-            $initialsSourceByFolder[$folder] = 'aus regelkonformen Dateien im Ordner'
-        } elseif ($kuerzelByFolder.ContainsKey($folder)) {
-            $initialsByFolder[$folder] = $kuerzelByFolder[$folder]
-            $initialsSourceByFolder[$folder] = 'aus der Kürzel-Registry'
-        } elseif ($guessedVotes.Count -eq 1) {
-            $initialsByFolder[$folder] = @($guessedVotes.Keys)[0]
-            $initialsSourceByFolder[$folder] = 'aus anderen Dateinamen im Ordner'
-        }
-    }
+    $initialsByFolder = Get-DocFlowFolderInitials -Files $files -Rules $config.namingConventions -Registry $registry -KuerzelByFolder $kuerzelByFolder -Placeholder $Placeholder
 
     $plannedDestinations = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     $results = New-Object System.Collections.Generic.List[object]
@@ -188,12 +132,12 @@ try {
         $originalStem = [System.IO.Path]::GetFileNameWithoutExtension($item.Name)
         $extension = [System.IO.Path]::GetExtension($item.Name)
         $folder = $item.DirectoryName.TrimEnd('\', '/')
-        $knownInitials = if ($initialsByFolder.ContainsKey($folder)) { $initialsByFolder[$folder] } else { $null }
+        $knownInitials = if ($initialsByFolder.ContainsKey($folder)) { $initialsByFolder[$folder].Initials } else { $null }
 
         $proposal = Get-DocFlowNameProposal -Name $originalStem -Rules $config.namingConventions -Registry $registry -KnownInitials $knownInitials -Placeholder $Placeholder
         $notes = @($proposal.Notes)
         if ($knownInitials -and -not $proposal.Compliant) {
-            $notes = @("Initialen '$knownInitials' $($initialsSourceByFolder[$folder])") + $notes
+            $notes = @("Initialen '$knownInitials' $($initialsByFolder[$folder].Source)") + $notes
         }
 
         if ($proposal.Compliant) {
