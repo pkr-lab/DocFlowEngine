@@ -212,6 +212,20 @@ function Find-DocFlowExistingSubmission {
         Select-Object -First 1
 }
 
+function New-DocFlowSubmissionStem {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Initials,
+        [int]$Version = 0,
+        [Parameter(Mandatory)] [string]$Praefix,
+        [Parameter(Mandatory)] [string]$Suffix,
+        [Parameter(Mandatory)] [string]$Aufgabennummer
+    )
+
+    $versionPart = if ($Version -gt 0) { "_v$Version" } else { '' }
+    return "${Initials}${versionPart}_${Praefix}_${Suffix}_${Aufgabennummer}"
+}
+
 function Get-DocFlowSuggestedVersionName {
     [CmdletBinding()]
     param(
@@ -246,7 +260,8 @@ function Get-DocFlowSuggestedVersionName {
     }
 
     $nextVersion = $highestVersion + 1
-    return "$($parts.Initials)_v$($nextVersion)_$($parts.Praefix)_$($parts.Suffix)_$($parts.Aufgabennummer)$($File.Extension)"
+    $stem = New-DocFlowSubmissionStem -Initials $parts.Initials -Version $nextVersion -Praefix $parts.Praefix -Suffix $parts.Suffix -Aufgabennummer $parts.Aufgabennummer
+    return "$stem$($File.Extension)"
 }
 
 function Write-DocFlowDuplicateHint {
@@ -697,8 +712,7 @@ function Get-DocFlowNameProposal {
     if (-not $suffix) { $suffix = $Placeholder }
     if (-not $aufgabennummer) { $aufgabennummer = $Placeholder; $notes.Add('Aufgabennummer nicht erkannt') }
 
-    $versionPart = if ($version -gt 0) { "_v$version" } else { '' }
-    $stem = "${initials}${versionPart}_${praefix}_${suffix}_${aufgabennummer}"
+    $stem = New-DocFlowSubmissionStem -Initials $initials -Version $version -Praefix $praefix -Suffix $suffix -Aufgabennummer $aufgabennummer
 
     return [PSCustomObject]@{
         Stem = $stem
