@@ -959,3 +959,83 @@ Describe 'Abgabe-Absicherung (Kopierwiederholung, Doppelabgabe, Schreibschutz, P
         }
     }
 }
+
+Describe 'Rename-ExistingAufgaben.ps1' {
+    BeforeEach {
+        $script:renameScript = Join-Path $PSScriptRoot '../scripts/Rename-ExistingAufgaben.ps1'
+        $script:renameRoot = Join-Path $TestDrive "rename-$(New-Guid)"
+        $script:renameStudent = Join-Path $script:renameRoot 'quelle/pke'
+        New-Item -Path $script:renameStudent -ItemType Directory -Force | Out-Null
+
+        $registryPath = Join-Path $script:renameRoot 'project-routes.txt'
+        Set-Content -Path $registryPath -Value @('praefix=Java', 'suffix=Arrays')
+
+        $script:renameConfig = Join-Path $script:renameRoot 'config.psd1'
+        $configText = @"
+@{
+    sources = @(@{ path = '$($script:renameRoot)/quelle'; recursive = `$true; includePatterns = @('*.pdf'); excludePatterns = @() })
+    aufgabenRoot = '$($script:renameRoot)/aufgaben'
+    namingConventions = @(
+        @{
+            match  = '^(?<initials>[A-Za-z]+)(?<versiontag>_v[0-9]+)?_(?<praefix>[A-Za-z]+)_(?<suffix>[A-Za-z0-9]+)_(?<aufgabennummer>[A-Za-z0-9]+)$'
+            rename = '{date}_{initials}{versiontag}_{praefix}_{suffix}_{aufgabennummer}'
+        }
+    )
+    projectRoutesFile = '$registryPath'
+    stateFile = '$($script:renameRoot)/state.json'
+    log = @{ level = 'Error'; file = '' }
+}
+"@
+        Set-Content -Path $script:renameConfig -Value $configText
+
+        foreach ($name in @('pke_Java_Arrays_abc.pdf', 'Java Arrays Blatt3.pdf', 'Java Arrays abc.pdf', 'irgendwas.pdf')) {
+            Set-Content -Path (Join-Path $script:renameStudent $name) -Value 'dummy'
+        }
+        $script:renameReport = Join-Path $script:renameRoot 'report.csv'
+    }
+
+    It 'schlägt in der Vorschau Namen vor, ohne Dateien zu verändern' {
+        & $script:renameScript -ConfigPath $script:renameConfig -ReportPath $script:renameReport 6>$null
+
+        $rows = @(Import-Csv -LiteralPath $script:renameReport -Delimiter ';')
+        $byOld = @{}
+        foreach ($row in $rows) { $byOld[$row.Alt] = $row }
+
+        $rows.Count | Should -Be 4
+        $byOld['pke_Java_Arrays_abc.pdf'].Status | Should -Be 'bereits regelkonform'
+        $byOld['Java Arrays Blatt3.pdf'].Status | Should -Be 'umbenannt'
+        $byOld['Java Arrays Blatt3.pdf'].Neu | Should -Be 'pke_Java_Arrays_Blatt3.pdf'
+        $byOld['Java Arrays Blatt3.pdf'].Hinweise | Should -Match "^Initialen 'pke' aus regelkonformen Dateien im Ordner"
+        $byOld['Java Arrays abc.pdf'].Neu | Should -Be 'pke_v2_Java_Arrays_abc.pdf'
+        $byOld['Java Arrays abc.pdf'].Hinweise | Should -Match 'Name war schon vergeben, Version _v2 gesetzt'
+        $byOld['irgendwas.pdf'].Status | Should -Be 'unverändert (kein Fach erkannt)'
+        @($rows | Where-Object { $_.Ausgefuehrt -ne 'nein' }).Count | Should -Be 0
+        Test-Path (Join-Path $script:renameStudent 'Java Arrays Blatt3.pdf') | Should -BeTrue
+    }
+
+    It 'benennt mit -Apply um und macht es mit -Undo rückgängig' {
+        & $script:renameScript -ConfigPath $script:renameConfig -ReportPath $script:renameReport -Apply 6>$null
+
+        Test-Path (Join-Path $script:renameStudent 'pke_Java_Arrays_Blatt3.pdf') | Should -BeTrue
+        Test-Path (Join-Path $script:renameStudent 'pke_v2_Java_Arrays_abc.pdf') | Should -BeTrue
+        Test-Path (Join-Path $script:renameStudent 'irgendwas.pdf') | Should -BeTrue
+        @(Import-Csv -LiteralPath $script:renameReport -Delimiter ';' | Where-Object { $_.Ausgefuehrt -eq 'ja' }).Count | Should -Be 2
+
+        & $script:renameScript -Undo $script:renameReport 6>$null
+
+        Test-Path (Join-Path $script:renameStudent 'Java Arrays Blatt3.pdf') | Should -BeTrue
+        Test-Path (Join-Path $script:renameStudent 'Java Arrays abc.pdf') | Should -BeTrue
+        Test-Path (Join-Path $script:renameStudent 'pke_Java_Arrays_Blatt3.pdf') | Should -BeFalse
+    }
+
+    It 'trägt umbenannte Dateien mit -MarkAsProcessed als verarbeitet in den Zustand ein' {
+        & $script:renameScript -ConfigPath $script:renameConfig -ReportPath $script:renameReport -Apply -MarkAsProcessed 6>$null
+
+        $state = Get-Content -Path (Join-Path $script:renameRoot 'state.json') -Raw | ConvertFrom-Json
+        $keys = @($state.processed.PSObject.Properties.Name)
+        $keys.Count | Should -Be 2
+        $entry = $state.processed.PSObject.Properties | Where-Object { $_.Name -like '*pke_java_arrays_blatt3.pdf' } | Select-Object -ExpandProperty Value
+        $entry.migriert | Should -BeTrue
+        @($entry.targets).Count | Should -Be 0
+    }
+}
