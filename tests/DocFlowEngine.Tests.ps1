@@ -1069,3 +1069,29 @@ Describe 'Get-DocFlowSuggestedVersionName' {
         Get-DocFlowSuggestedVersionName -File $script:versionFile -Rules $script:versionRules -TargetDirectory $script:versionTarget -ReviewMarkerPattern '_korr-[A-Za-z0-9]+$' | Should -Be 'pke_v4_Java_Arrays_abc.pdf'
     }
 }
+
+Describe 'Load-State / Save-State' {
+    It 'behält einelementige targets-Listen beim Speichern und erneuten Laden als Liste' {
+        $statePath = Join-Path $TestDrive "state-$(New-Guid).json"
+        $state = @{ processed = @{ 'a|b.pdf' = [ordered]@{ source = 'b.pdf'; targets = @('ziel/b.pdf'); processedAt = '2026-01-01T00:00:00' } }; reviewedFiles = @{} }
+
+        Save-State -StatePath $statePath -State $state
+        $reloaded = Load-State -StatePath $statePath
+        Save-State -StatePath $statePath -State $reloaded
+        $reloadedAgain = Load-State -StatePath $statePath
+
+        , $reloadedAgain.processed['a|b.pdf'].targets | Should -BeOfType [array]
+        @($reloadedAgain.processed['a|b.pdf'].targets) | Should -Be @('ziel/b.pdf')
+        (Get-Content -Path $statePath -Raw) | Should -Match '"targets":\s*\['
+    }
+
+    It 'lädt leere targets-Listen als leere Liste' {
+        $statePath = Join-Path $TestDrive "state-$(New-Guid).json"
+        Set-Content -Path $statePath -Value '{ "processed": { "k": { "targets": [] } }, "reviewedFiles": {} }'
+
+        $reloaded = Load-State -StatePath $statePath
+
+        , $reloaded.processed['k'].targets | Should -BeOfType [array]
+        @($reloaded.processed['k'].targets).Count | Should -Be 0
+    }
+}
