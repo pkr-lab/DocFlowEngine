@@ -25,15 +25,10 @@ function Invoke-DocFlowEngine {
         [switch]$DryRun
     )
 
-    $Script:LogLevels = @{ Trace = 0; Debug = 1; Info = 2; Warning = 3; Error = 4 }
     $Script:DryRun = $DryRun
 
     $config = Load-Config -Path $ConfigPath
-    $logLevelValue = $config.log.level
-    if ($null -eq $logLevelValue) {
-        $logLevelValue = 'Info'
-    }
-    $logLevelName = $logLevelValue.ToString()
+    $logLevelName = [string]$config.log.level
     if (-not $Script:LogLevels.ContainsKey($logLevelName)) {
         $logLevelName = 'Info'
     }
