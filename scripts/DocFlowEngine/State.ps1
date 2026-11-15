@@ -1,4 +1,4 @@
-function Load-State {
+function Import-DocFlowState {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [string]$StatePath

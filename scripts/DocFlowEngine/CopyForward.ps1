@@ -5,7 +5,7 @@ function Get-SourceFiles {
         [Parameter(Mandatory)] [string]$ResolvedPath
     )
 
-    if (-not (Test-Path $ResolvedPath)) {
+    if (-not (Test-Path -LiteralPath $ResolvedPath)) {
         Write-Log -Level Warning -Message "Quellverzeichnis '$ResolvedPath' existiert nicht. Überspringe."
         return @()
     }
@@ -13,9 +13,9 @@ function Get-SourceFiles {
     $files = [ordered]@{}
     foreach ($pattern in $Source.includePatterns) {
         if ($Source.recursive) {
-            $items = Get-ChildItem -Path $ResolvedPath -Filter $pattern -File -Recurse -ErrorAction SilentlyContinue
+            $items = Get-ChildItem -LiteralPath $ResolvedPath -Filter $pattern -File -Recurse -ErrorAction SilentlyContinue
         } else {
-            $items = Get-ChildItem -Path $ResolvedPath -Filter $pattern -File -ErrorAction SilentlyContinue
+            $items = Get-ChildItem -LiteralPath $ResolvedPath -Filter $pattern -File -ErrorAction SilentlyContinue
         }
 
         foreach ($item in $items) {
@@ -34,7 +34,7 @@ function Get-SourceFiles {
     return $files.Values
 }
 
-function Ensure-TargetDirectories {
+function Initialize-DocFlowTargetDirectories {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [array]$Targets
@@ -118,6 +118,74 @@ function Test-DocFlowHintFileName {
     return $false
 }
 
+function Complete-DocFlowProcessedFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [hashtable]$State,
+        [Parameter(Mandatory)] [string]$SourceKey,
+        [Parameter(Mandatory)] [System.IO.FileInfo]$File,
+        [AllowEmptyCollection()] [array]$TargetPaths = @(),
+        [AllowEmptyCollection()] [array]$HintSuffixes = @()
+    )
+
+    $fingerprint = Get-DocFlowFileFingerprint -File $File
+    $State.processed[$SourceKey] = [ordered]@{
+        source = $File.FullName
+        targets = $TargetPaths
+        processedAt = (Get-Date).ToString('o')
+        length = $fingerprint.Length
+        lastWriteUtcSeconds = $fingerprint.LastWriteUtcSeconds
+    }
+
+    foreach ($suffix in $HintSuffixes) {
+        Remove-DocFlowHintFile -Path "$($File.FullName)$suffix" -Reason 'Datei wurde verarbeitet'
+    }
+}
+
+function Get-DocFlowWhitelistRejectionReason {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [PSCustomObject]$PraefixSuffix,
+        $Registry
+    )
+
+    if ($Registry -and $Registry.Contains('Paare') -and $Registry.Paare) {
+        if (-not $Registry.Paare.ContainsKey($PraefixSuffix.Praefix)) {
+            return "Präfix '$($PraefixSuffix.Praefix)' ist nicht"
+        }
+
+        return "Suffix '$($PraefixSuffix.Suffix)' ist für Präfix '$($PraefixSuffix.Praefix)' nicht"
+    }
+
+    $unknownParts = @()
+    if (-not ($Registry -and $Registry.Praefixe -and $Registry.Praefixe.Contains($PraefixSuffix.Praefix))) {
+        $unknownParts += "Präfix '$($PraefixSuffix.Praefix)'"
+    }
+    if (-not ($Registry -and $Registry.Suffixe -and $Registry.Suffixe.Contains($PraefixSuffix.Suffix))) {
+        $unknownParts += "Suffix '$($PraefixSuffix.Suffix)'"
+    }
+
+    return "$($unknownParts -join ' und ') nicht"
+}
+
+function Write-DocFlowResubmissionHint {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [System.IO.FileInfo]$File,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [array]$Rules,
+        [hashtable]$DuplicateHint,
+        [string]$TargetDirectory,
+        [string]$ReviewMarkerPattern = $Script:DefaultReviewMarkerPattern
+    )
+
+    if (-not ($DuplicateHint -and $DuplicateHint.enabled)) {
+        return
+    }
+
+    $suggestedName = Get-DocFlowSuggestedVersionName -File $File -Rules $Rules -TargetDirectory $TargetDirectory -ReviewMarkerPattern $ReviewMarkerPattern
+    Write-DocFlowDuplicateHint -File $File -HintConfig $DuplicateHint -SuggestedName $suggestedName
+}
+
 function Copy-NewFiles {
     [CmdletBinding()]
     param(
@@ -127,7 +195,6 @@ function Copy-NewFiles {
         [Parameter(Mandatory)] [AllowEmptyCollection()] [array]$Rules,
         [Parameter(Mandatory)] [string]$DefaultNameFormat,
         [array]$CategoryRoutes = @(),
-        [hashtable]$ProjectRoutes = @{},
         [string]$AufgabenRoot = $null,
         [hashtable]$PraefixSuffixRegistry = $null,
         [string]$RegistryFilePath = $null,
@@ -137,6 +204,7 @@ function Copy-NewFiles {
         [hashtable]$KuerzelRoutes = $null,
         [string]$KuerzelRoutesFilePath = $null,
         [string]$KorrigiertFolderName = $null,
+        [string]$ReviewMarkerPattern = $Script:DefaultReviewMarkerPattern,
         [double]$MinFileAgeMinutes = 0,
         [int]$RetryCount = 2,
         [int]$RetryDelaySeconds = 5
@@ -206,11 +274,8 @@ function Copy-NewFiles {
                     }
 
                     Write-Log -Level Warning -Message "Datei '$($item.Name)' wurde nach der Abgabe unter gleichem Namen überschrieben. Sie wird nicht erneut kopiert; der Schüler soll eine Versionsangabe (_v2_ usw.) verwenden."
-                    if ($DuplicateHint -and $DuplicateHint.enabled) {
-                        $suggestionDirectory = if ($praefixSuffix) { Join-Path (Join-Path $AufgabenRoot $praefixSuffix.Praefix) $praefixSuffix.Suffix } else { $null }
-                        $suggestedName = Get-DocFlowSuggestedVersionName -File $item -Rules $Rules -TargetDirectory $suggestionDirectory
-                        Write-DocFlowDuplicateHint -File $item -HintConfig $DuplicateHint -SuggestedName $suggestedName
-                    }
+                    $suggestionDirectory = if ($praefixSuffix) { Join-Path (Join-Path $AufgabenRoot $praefixSuffix.Praefix) $praefixSuffix.Suffix } else { $null }
+                    Write-DocFlowResubmissionHint -File $item -Rules $Rules -DuplicateHint $DuplicateHint -TargetDirectory $suggestionDirectory -ReviewMarkerPattern $ReviewMarkerPattern
                     continue
                 }
 
@@ -221,7 +286,7 @@ function Copy-NewFiles {
                 $targetFileName = Get-TargetFileName -File $item -Rules $Rules -DefaultFormat $DefaultNameFormat
 
                 $effectiveTargets = $Targets
-                $routingActive = ($ProjectRoutes.Count -gt 0) -or ($CategoryRoutes.Count -gt 0)
+                $routingActive = $CategoryRoutes.Count -gt 0
                 $routedTargetPath = $null
                 $routedToAufgaben = $false
 
@@ -247,35 +312,13 @@ function Copy-NewFiles {
                         $routedToAufgaben = $true
                     } elseif ($NamingConventionHint -and $NamingConventionHint.enabled) {
                         if ($praefixSuffix) {
-                            if ($PraefixSuffixRegistry -and $PraefixSuffixRegistry.Contains('Paare') -and $PraefixSuffixRegistry.Paare) {
-                                if (-not $PraefixSuffixRegistry.Paare.ContainsKey($praefixSuffix.Praefix)) {
-                                    $reason = "Präfix '$($praefixSuffix.Praefix)' ist nicht"
-                                } else {
-                                    $reason = "Suffix '$($praefixSuffix.Suffix)' ist für Präfix '$($praefixSuffix.Praefix)' nicht"
-                                }
-                            } else {
-                                $unknownParts = @()
-                                if (-not ($PraefixSuffixRegistry -and $PraefixSuffixRegistry.Praefixe -and $PraefixSuffixRegistry.Praefixe.Contains($praefixSuffix.Praefix))) {
-                                    $unknownParts += "Präfix '$($praefixSuffix.Praefix)'"
-                                }
-                                if (-not ($PraefixSuffixRegistry -and $PraefixSuffixRegistry.Suffixe -and $PraefixSuffixRegistry.Suffixe.Contains($praefixSuffix.Suffix))) {
-                                    $unknownParts += "Suffix '$($praefixSuffix.Suffix)'"
-                                }
-                                $reason = "$($unknownParts -join ' und ') nicht"
-                            }
+                            $reason = Get-DocFlowWhitelistRejectionReason -PraefixSuffix $praefixSuffix -Registry $PraefixSuffixRegistry
                             Write-Log -Level Warning -Message "Datei '$($item.Name)': $reason in der Whitelist '$RegistryFilePath' eingetragen."
                         } else {
                             Write-Log -Level Warning -Message "Datei '$($item.Name)' passt nicht zum Schema initialen[_v<version>]_praefix_suffix_aufgabennummer (nur Buchstaben/Ziffern, keine Leerzeichen, Bindestriche oder Umlaute)."
                         }
                         Write-NamingConventionHint -File $item -HintConfig $NamingConventionHint -PraefixSuffix $praefixSuffix
                         continue
-                    }
-                }
-
-                if (-not $routedTargetPath -and $ProjectRoutes.Count -gt 0) {
-                    $projectName = Get-FileProject -File $item -Rules $Rules
-                    if ($projectName) {
-                        $routedTargetPath = Resolve-ProjectTarget -ProjectName $projectName -ProjectRoutes $ProjectRoutes
                     }
                 }
 
@@ -289,7 +332,7 @@ function Copy-NewFiles {
                 if ($routedTargetPath) {
                     $effectiveTargets = @(@{ path = (Resolve-PathOrAbsolute -PathValue $routedTargetPath); preserveSubfolders = $false })
                 } elseif ($routingActive) {
-                    Write-Log -Level Warning -Message "Keine passende Projekt- oder Kategorie-Zuordnung für '$($item.Name)' gefunden. Datei wird übersprungen."
+                    Write-Log -Level Warning -Message "Keine passende Kategorie-Zuordnung für '$($item.Name)' gefunden. Datei wird übersprungen."
                     continue
                 } elseif (@($effectiveTargets).Count -eq 0) {
                     Write-Log -Level Warning -Message "Kein Ziel für '$($item.Name)' ermittelbar (kein gültiges Präfix/Suffix-Routing, keine 'targets' konfiguriert). Datei wird übersprungen."
@@ -301,25 +344,12 @@ function Copy-NewFiles {
                     if ($existingSubmission) {
                         if ($existingSubmission.Length -eq $item.Length) {
                             Write-Log -Level Info -Message "Datei '$($item.Name)' liegt bereits identisch in '$($existingSubmission.FullName)'. Wird als verarbeitet übernommen."
-                            $fingerprint = Get-DocFlowFileFingerprint -File $item
-                            $State.processed[$sourceKey] = [ordered]@{
-                                source = $item.FullName
-                                targets = @($existingSubmission.FullName)
-                                processedAt = (Get-Date).ToString('o')
-                                length = $fingerprint.Length
-                                lastWriteUtcSeconds = $fingerprint.LastWriteUtcSeconds
-                            }
-                            foreach ($suffix in $hintSuffixes) {
-                                Remove-DocFlowHintFile -Path "$($item.FullName)$suffix" -Reason 'Datei wurde verarbeitet'
-                            }
+                            Complete-DocFlowProcessedFile -State $State -SourceKey $sourceKey -File $item -TargetPaths @($existingSubmission.FullName) -HintSuffixes $hintSuffixes
                             continue
                         }
 
                         Write-Log -Level Warning -Message "Datei '$($item.Name)' wurde bereits abgegeben ('$($existingSubmission.Name)'). Sie wird nicht erneut kopiert; der Schüler soll eine Versionsangabe (_v2_ usw.) verwenden."
-                        if ($DuplicateHint -and $DuplicateHint.enabled) {
-                            $suggestedName = Get-DocFlowSuggestedVersionName -File $item -Rules $Rules -TargetDirectory $effectiveTargets[0].path
-                            Write-DocFlowDuplicateHint -File $item -HintConfig $DuplicateHint -SuggestedName $suggestedName
-                        }
+                        Write-DocFlowResubmissionHint -File $item -Rules $Rules -DuplicateHint $DuplicateHint -TargetDirectory $effectiveTargets[0].path -ReviewMarkerPattern $ReviewMarkerPattern
                         continue
                     }
                 }
@@ -336,7 +366,7 @@ function Copy-NewFiles {
                         }
                     }
 
-                    if (-not (Test-Path $destinationDirectory)) {
+                    if (-not (Test-Path -LiteralPath $destinationDirectory)) {
                         if ($Script:DryRun) {
                             Write-Log -Level Info -Message "[DryRun] Verzeichnis würde erstellt: $destinationDirectory"
                         } else {
@@ -353,7 +383,7 @@ function Copy-NewFiles {
 
                     $destinationPath = Join-Path $destinationDirectory $targetFileName
 
-                    if (Test-Path $destinationPath) {
+                    if (Test-Path -LiteralPath $destinationPath) {
                         Write-Log -Level Warning -Message "Zieldatei existiert bereits, überspringe Kopie: '$destinationPath'"
                     } elseif ($Script:DryRun) {
                         Write-Log -Level Info -Message "[DryRun] Datei würde kopiert: '$($item.FullName)' -> '$destinationPath'"
@@ -372,18 +402,7 @@ function Copy-NewFiles {
                     continue
                 }
 
-                $fingerprint = Get-DocFlowFileFingerprint -File $item
-                $State.processed[$sourceKey] = [ordered]@{
-                    source = $item.FullName
-                    targets = $targetPaths
-                    processedAt = (Get-Date).ToString('o')
-                    length = $fingerprint.Length
-                    lastWriteUtcSeconds = $fingerprint.LastWriteUtcSeconds
-                }
-
-                foreach ($suffix in $hintSuffixes) {
-                    Remove-DocFlowHintFile -Path "$($item.FullName)$suffix" -Reason 'Datei wurde verarbeitet'
-                }
+                Complete-DocFlowProcessedFile -State $State -SourceKey $sourceKey -File $item -TargetPaths $targetPaths -HintSuffixes $hintSuffixes
             }
 
             if ($alreadyProcessedCount -gt 0) {

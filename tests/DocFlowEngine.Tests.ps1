@@ -407,6 +407,51 @@ Describe 'Copy-NewFiles: Praefix/Suffix-Whitelist bei aufgabenRoot' {
 
         Test-Path (Join-Path (Join-Path $script:aufgabenRoot2 'Ruby') 'Basics/pke_Ruby_Basics_abc.pdf') | Should -BeTrue
     }
+
+    It 'nennt im Log unbekanntes Praefix und Suffix, wenn die Registry keine Paare enthält' {
+        Set-Content -Path (Join-Path $script:sourceDir2 'pke_Ruby_Basics_abc.pdf') -Value 'dummy'
+        $state = @{ processed = @{}; reviewedFiles = @{} }
+        $registryPath = Join-Path $TestDrive "registry-$(New-Guid).txt"
+        Mock Write-Log -ModuleName DocFlowEngine
+
+        Copy-NewFiles -Sources $script:aufgabenSources -Targets $script:aufgabenTargets -State $state -Rules $script:aufgabenRules -DefaultNameFormat '{originalName}' -AufgabenRoot $script:aufgabenRoot2 -PraefixSuffixRegistry $script:knownRegistry -RegistryFilePath $registryPath -NamingConventionHint $script:hintConfig
+
+        Should -Invoke Write-Log -ModuleName DocFlowEngine -Times 1 -Exactly -ParameterFilter {
+            $Level -eq 'Warning' -and $Message -eq "Datei 'pke_Ruby_Basics_abc.pdf': Präfix 'Ruby' und Suffix 'Basics' nicht in der Whitelist '$registryPath' eingetragen."
+        }
+    }
+
+    It 'nennt im Log nur das unbekannte Suffix, wenn das Praefix in der Registry bekannt ist' {
+        Set-Content -Path (Join-Path $script:sourceDir2 'pke_Java_Basics_abc.pdf') -Value 'dummy'
+        $state = @{ processed = @{}; reviewedFiles = @{} }
+        $registryPath = Join-Path $TestDrive "registry-$(New-Guid).txt"
+        Mock Write-Log -ModuleName DocFlowEngine
+
+        Copy-NewFiles -Sources $script:aufgabenSources -Targets $script:aufgabenTargets -State $state -Rules $script:aufgabenRules -DefaultNameFormat '{originalName}' -AufgabenRoot $script:aufgabenRoot2 -PraefixSuffixRegistry $script:knownRegistry -RegistryFilePath $registryPath -NamingConventionHint $script:hintConfig
+
+        Should -Invoke Write-Log -ModuleName DocFlowEngine -Times 1 -Exactly -ParameterFilter {
+            $Level -eq 'Warning' -and $Message -eq "Datei 'pke_Java_Basics_abc.pdf': Suffix 'Basics' nicht in der Whitelist '$registryPath' eingetragen."
+        }
+    }
+
+    It 'unterscheidet bei einer Paar-Registry zwischen unbekanntem Praefix und unbekanntem Suffix' {
+        Set-Content -Path (Join-Path $script:sourceDir2 'pke_Ruby_Arrays_abc.pdf') -Value 'dummy'
+        Set-Content -Path (Join-Path $script:sourceDir2 'pke_Java_Basics_abc.pdf') -Value 'dummy'
+        $state = @{ processed = @{}; reviewedFiles = @{} }
+        $registryPath = Join-Path $TestDrive "registry-$(New-Guid).txt"
+        Set-Content -Path $registryPath -Value @('praefix=Java', 'suffix=Arrays')
+        $pairRegistry = Get-PraefixSuffixRegistry -Path $registryPath
+        Mock Write-Log -ModuleName DocFlowEngine
+
+        Copy-NewFiles -Sources $script:aufgabenSources -Targets $script:aufgabenTargets -State $state -Rules $script:aufgabenRules -DefaultNameFormat '{originalName}' -AufgabenRoot $script:aufgabenRoot2 -PraefixSuffixRegistry $pairRegistry -RegistryFilePath $registryPath -NamingConventionHint $script:hintConfig
+
+        Should -Invoke Write-Log -ModuleName DocFlowEngine -Times 1 -Exactly -ParameterFilter {
+            $Message -eq "Datei 'pke_Ruby_Arrays_abc.pdf': Präfix 'Ruby' ist nicht in der Whitelist '$registryPath' eingetragen."
+        }
+        Should -Invoke Write-Log -ModuleName DocFlowEngine -Times 1 -Exactly -ParameterFilter {
+            $Message -eq "Datei 'pke_Java_Basics_abc.pdf': Suffix 'Basics' ist für Präfix 'Java' nicht in der Whitelist '$registryPath' eingetragen."
+        }
+    }
 }
 
 Describe 'Lock-DocFlowRun / Unlock-DocFlowRun' {
@@ -439,7 +484,7 @@ Describe 'Lock-DocFlowRun / Unlock-DocFlowRun' {
     }
 }
 
-Describe 'Load-Config: Defaults für neue Optionen' {
+Describe 'Import-DocFlowConfig: Defaults für neue Optionen' {
     It 'setzt sinnvolle Defaults für reviewMarker, unknownKuerzelHint und namingConventionHint, wenn sie in der Config fehlen' {
         $configPath = Join-Path $TestDrive 'minimal-config.psd1'
         @'
@@ -450,7 +495,7 @@ Describe 'Load-Config: Defaults für neue Optionen' {
 }
 '@ | Set-Content -Path $configPath
 
-        $config = Load-Config -Path $configPath
+        $config = Import-DocFlowConfig -Path $configPath
 
         $config.reviewMarker.enabled | Should -BeFalse
         $config.reviewMarker.korrigiertFolderName | Should -Be 'Korrigiert'
@@ -544,7 +589,7 @@ Describe 'Get-DocFlowMigratedFileName' {
     }
 }
 
-Describe 'Load-Config: Pfad-Variablen aus paths' {
+Describe 'Import-DocFlowConfig: Pfad-Variablen aus paths' {
     It 'setzt die Werte aus paths in alle Pfadfelder ein, auch verschachtelt' {
         $configPath = Join-Path $TestDrive "paths-config-$(New-Guid).psd1"
         @'
@@ -565,7 +610,7 @@ Describe 'Load-Config: Pfad-Variablen aus paths' {
 }
 '@ | Set-Content -Path $configPath
 
-        $config = Load-Config -Path $configPath
+        $config = Import-DocFlowConfig -Path $configPath
 
         $config.sources[0].path | Should -Be 'C:/Basis/Quelle/'
         $config.targets[0].path | Should -Be 'C:/Basis/Archiv'
@@ -589,7 +634,7 @@ Describe 'Load-Config: Pfad-Variablen aus paths' {
 }
 '@ | Set-Content -Path $configPath
 
-        { Load-Config -Path $configPath } | Should -Throw '*gibtsnicht*'
+        { Import-DocFlowConfig -Path $configPath } | Should -Throw '*gibtsnicht*'
     }
 
     It 'wirft bei einem zirkulären Verweis in paths' {
@@ -603,7 +648,7 @@ Describe 'Load-Config: Pfad-Variablen aus paths' {
 }
 '@ | Set-Content -Path $configPath
 
-        { Load-Config -Path $configPath } | Should -Throw '*Zirkulär*'
+        { Import-DocFlowConfig -Path $configPath } | Should -Throw '*Zirkulär*'
     }
 }
 
@@ -618,7 +663,7 @@ Describe 'Betrieb ohne targets (kein Archiv)' {
 }
 '@ | Set-Content -Path $configPath
 
-        $config = Load-Config -Path $configPath
+        $config = Import-DocFlowConfig -Path $configPath
         @($config.targets).Count | Should -Be 0
     }
 
@@ -631,7 +676,7 @@ Describe 'Betrieb ohne targets (kein Archiv)' {
 }
 '@ | Set-Content -Path $configPath
 
-        { Load-Config -Path $configPath } | Should -Throw '*aufgabenRoot*'
+        { Import-DocFlowConfig -Path $configPath } | Should -Throw '*aufgabenRoot*'
     }
 
     It 'überspringt eine nicht routbare Datei ohne Archiv-Kopie und ohne Zustandseintrag' {
@@ -681,7 +726,7 @@ Describe 'Abgabe-Absicherung (Kopierwiederholung, Doppelabgabe, Schreibschutz, P
             Mock Copy-Item -ModuleName DocFlowEngine -MockWith {
                 $global:docflowCopyCalls++
                 if ($global:docflowCopyCalls -lt 3) { throw 'gesperrt' }
-                [System.IO.File]::Copy($Path, $Destination, $true)
+                [System.IO.File]::Copy($LiteralPath, $Destination, $true)
             }
             $sourceFile = Join-Path $script:src 'a.pdf'
             Set-Content -Path $sourceFile -Value 'inhalt'
@@ -698,7 +743,7 @@ Describe 'Abgabe-Absicherung (Kopierwiederholung, Doppelabgabe, Schreibschutz, P
             Should -Invoke Copy-Item -ModuleName DocFlowEngine -Times 3 -Exactly
             $script:state.processed.Count | Should -Be 0
 
-            Mock Copy-Item -ModuleName DocFlowEngine -MockWith { [System.IO.File]::Copy($Path, $Destination, $true) }
+            Mock Copy-Item -ModuleName DocFlowEngine -MockWith { [System.IO.File]::Copy($LiteralPath, $Destination, $true) }
             & $script:run
             $script:state.processed.Count | Should -Be 1
             @(Get-ChildItem -Path $script:arraysDir -File).Count | Should -Be 1
@@ -912,5 +957,186 @@ Describe 'Abgabe-Absicherung (Kopierwiederholung, Doppelabgabe, Schreibschutz, P
 
             Test-Path "$korrektur.KUERZEL-UNBEKANNT.txt" | Should -BeFalse
         }
+    }
+}
+
+Describe 'Rename-ExistingAufgaben.ps1' {
+    BeforeEach {
+        $script:renameScript = Join-Path $PSScriptRoot '../scripts/Rename-ExistingAufgaben.ps1'
+        $script:renameRoot = Join-Path $TestDrive "rename-$(New-Guid)"
+        $script:renameStudent = Join-Path $script:renameRoot 'quelle/pke'
+        New-Item -Path $script:renameStudent -ItemType Directory -Force | Out-Null
+
+        $registryPath = Join-Path $script:renameRoot 'project-routes.txt'
+        Set-Content -Path $registryPath -Value @('praefix=Java', 'suffix=Arrays')
+
+        $script:renameConfig = Join-Path $script:renameRoot 'config.psd1'
+        $configText = @"
+@{
+    sources = @(@{ path = '$($script:renameRoot)/quelle'; recursive = `$true; includePatterns = @('*.pdf'); excludePatterns = @() })
+    aufgabenRoot = '$($script:renameRoot)/aufgaben'
+    namingConventions = @(
+        @{
+            match  = '^(?<initials>[A-Za-z]+)(?<versiontag>_v[0-9]+)?_(?<praefix>[A-Za-z]+)_(?<suffix>[A-Za-z0-9]+)_(?<aufgabennummer>[A-Za-z0-9]+)$'
+            rename = '{date}_{initials}{versiontag}_{praefix}_{suffix}_{aufgabennummer}'
+        }
+    )
+    projectRoutesFile = '$registryPath'
+    stateFile = '$($script:renameRoot)/state.json'
+    log = @{ level = 'Error'; file = '' }
+}
+"@
+        Set-Content -Path $script:renameConfig -Value $configText
+
+        foreach ($name in @('pke_Java_Arrays_abc.pdf', 'Java Arrays Blatt3.pdf', 'Java Arrays abc.pdf', 'irgendwas.pdf')) {
+            Set-Content -Path (Join-Path $script:renameStudent $name) -Value 'dummy'
+        }
+        $script:renameReport = Join-Path $script:renameRoot 'report.csv'
+    }
+
+    It 'schlägt in der Vorschau Namen vor, ohne Dateien zu verändern' {
+        & $script:renameScript -ConfigPath $script:renameConfig -ReportPath $script:renameReport 6>$null
+
+        $rows = @(Import-Csv -LiteralPath $script:renameReport -Delimiter ';')
+        $byOld = @{}
+        foreach ($row in $rows) { $byOld[$row.Alt] = $row }
+
+        $rows.Count | Should -Be 4
+        $byOld['pke_Java_Arrays_abc.pdf'].Status | Should -Be 'bereits regelkonform'
+        $byOld['Java Arrays Blatt3.pdf'].Status | Should -Be 'umbenannt'
+        $byOld['Java Arrays Blatt3.pdf'].Neu | Should -Be 'pke_Java_Arrays_Blatt3.pdf'
+        $byOld['Java Arrays Blatt3.pdf'].Hinweise | Should -Match "^Initialen 'pke' aus regelkonformen Dateien im Ordner"
+        $byOld['Java Arrays abc.pdf'].Neu | Should -Be 'pke_v2_Java_Arrays_abc.pdf'
+        $byOld['Java Arrays abc.pdf'].Hinweise | Should -Match 'Name war schon vergeben, Version _v2 gesetzt'
+        $byOld['irgendwas.pdf'].Status | Should -Be 'unverändert (kein Fach erkannt)'
+        @($rows | Where-Object { $_.Ausgefuehrt -ne 'nein' }).Count | Should -Be 0
+        Test-Path (Join-Path $script:renameStudent 'Java Arrays Blatt3.pdf') | Should -BeTrue
+    }
+
+    It 'benennt mit -Apply um und macht es mit -Undo rückgängig' {
+        & $script:renameScript -ConfigPath $script:renameConfig -ReportPath $script:renameReport -Apply 6>$null
+
+        Test-Path (Join-Path $script:renameStudent 'pke_Java_Arrays_Blatt3.pdf') | Should -BeTrue
+        Test-Path (Join-Path $script:renameStudent 'pke_v2_Java_Arrays_abc.pdf') | Should -BeTrue
+        Test-Path (Join-Path $script:renameStudent 'irgendwas.pdf') | Should -BeTrue
+        @(Import-Csv -LiteralPath $script:renameReport -Delimiter ';' | Where-Object { $_.Ausgefuehrt -eq 'ja' }).Count | Should -Be 2
+
+        & $script:renameScript -Undo $script:renameReport 6>$null
+
+        Test-Path (Join-Path $script:renameStudent 'Java Arrays Blatt3.pdf') | Should -BeTrue
+        Test-Path (Join-Path $script:renameStudent 'Java Arrays abc.pdf') | Should -BeTrue
+        Test-Path (Join-Path $script:renameStudent 'pke_Java_Arrays_Blatt3.pdf') | Should -BeFalse
+    }
+
+    It 'trägt umbenannte Dateien mit -MarkAsProcessed als verarbeitet in den Zustand ein' {
+        & $script:renameScript -ConfigPath $script:renameConfig -ReportPath $script:renameReport -Apply -MarkAsProcessed 6>$null
+
+        $state = Get-Content -Path (Join-Path $script:renameRoot 'state.json') -Raw | ConvertFrom-Json
+        $keys = @($state.processed.PSObject.Properties.Name)
+        $keys.Count | Should -Be 2
+        $entry = $state.processed.PSObject.Properties | Where-Object { $_.Name -like '*pke_java_arrays_blatt3.pdf' } | Select-Object -ExpandProperty Value
+        $entry.migriert | Should -BeTrue
+        @($entry.targets).Count | Should -Be 0
+    }
+}
+
+Describe 'Get-DocFlowSuggestedVersionName' {
+    BeforeAll {
+        $script:versionRules = @(
+            @{
+                match  = '^(?<initials>[A-Za-z]+)(?<versiontag>_v[0-9]+)?_(?<praefix>[A-Za-z]+)_(?<suffix>[A-Za-z0-9]+)_(?<aufgabennummer>[A-Za-z0-9]+)$'
+                rename = '{initials}{versiontag}_{praefix}_{suffix}_{aufgabennummer}'
+            }
+        )
+    }
+
+    BeforeEach {
+        $script:versionSource = Join-Path $TestDrive "src-$(New-Guid)"
+        $script:versionTarget = Join-Path $TestDrive "ziel-$(New-Guid)"
+        New-Item -Path $script:versionSource, $script:versionTarget -ItemType Directory -Force | Out-Null
+        $script:versionFile = New-Item -Path (Join-Path $script:versionSource 'pke_Java_Arrays_abc.pdf') -ItemType File -Force
+    }
+
+    It 'zählt korrigierte Versionen mit dem Standard-Korrekturmarker mit' {
+        New-Item -Path (Join-Path $script:versionTarget '20260101_pke_v3_Java_Arrays_abc_k-ahf.pdf') -ItemType File -Force | Out-Null
+
+        Get-DocFlowSuggestedVersionName -File $script:versionFile -Rules $script:versionRules -TargetDirectory $script:versionTarget | Should -Be 'pke_v4_Java_Arrays_abc.pdf'
+    }
+
+    It 'zählt korrigierte Versionen mit einem konfigurierten Korrekturmarker mit' {
+        New-Item -Path (Join-Path $script:versionTarget '20260101_pke_v3_Java_Arrays_abc_korr-ahf.pdf') -ItemType File -Force | Out-Null
+
+        Get-DocFlowSuggestedVersionName -File $script:versionFile -Rules $script:versionRules -TargetDirectory $script:versionTarget -ReviewMarkerPattern '_korr-[A-Za-z0-9]+$' | Should -Be 'pke_v4_Java_Arrays_abc.pdf'
+    }
+}
+
+Describe 'Import-DocFlowState / Save-State' {
+    It 'behält einelementige targets-Listen beim Speichern und erneuten Laden als Liste' {
+        $statePath = Join-Path $TestDrive "state-$(New-Guid).json"
+        $state = @{ processed = @{ 'a|b.pdf' = [ordered]@{ source = 'b.pdf'; targets = @('ziel/b.pdf'); processedAt = '2026-01-01T00:00:00' } }; reviewedFiles = @{} }
+
+        Save-State -StatePath $statePath -State $state
+        $reloaded = Import-DocFlowState -StatePath $statePath
+        Save-State -StatePath $statePath -State $reloaded
+        $reloadedAgain = Import-DocFlowState -StatePath $statePath
+
+        , $reloadedAgain.processed['a|b.pdf'].targets | Should -BeOfType [array]
+        @($reloadedAgain.processed['a|b.pdf'].targets) | Should -Be @('ziel/b.pdf')
+        (Get-Content -Path $statePath -Raw) | Should -Match '"targets":\s*\['
+    }
+
+    It 'lädt leere targets-Listen als leere Liste' {
+        $statePath = Join-Path $TestDrive "state-$(New-Guid).json"
+        Set-Content -Path $statePath -Value '{ "processed": { "k": { "targets": [] } }, "reviewedFiles": {} }'
+
+        $reloaded = Import-DocFlowState -StatePath $statePath
+
+        , $reloaded.processed['k'].targets | Should -BeOfType [array]
+        @($reloaded.processed['k'].targets).Count | Should -Be 0
+    }
+}
+
+Describe 'Copy-NewFiles: Dateinamen mit eckigen Klammern' {
+    It 'kopiert Dateien und Unterordner mit [ ] im Namen wörtlich statt als Wildcard' {
+        $sourceDir = Join-Path $TestDrive "quelle-$(New-Guid)"
+        $studentDir = Join-Path $sourceDir 'Klasse [A]'
+        $targetDir = Join-Path $TestDrive "ziel-$(New-Guid)"
+        New-Item -Path $studentDir -ItemType Directory -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $studentDir 'Bericht [1].pdf') -Value 'dummy'
+        $sources = @(@{ path = $sourceDir; recursive = $true; includePatterns = @('*.pdf'); excludePatterns = @() })
+        $targets = @(@{ path = $targetDir; preserveSubfolders = $true })
+        $rules = @(@{ match = '^(?<name>.+)$'; rename = '{name}' })
+        $state = @{ processed = @{}; reviewedFiles = @{} }
+
+        Copy-NewFiles -Sources $sources -Targets $targets -State $state -Rules $rules -DefaultNameFormat '{originalName}' -RetryCount 0 -RetryDelaySeconds 0
+
+        Test-Path -LiteralPath (Join-Path (Join-Path $targetDir 'Klasse [A]') 'Bericht [1].pdf') | Should -BeTrue
+        $state.processed.Count | Should -Be 1
+    }
+}
+
+Describe 'Modul-Exporte' {
+    It 'stellt die früheren Funktionsnamen als Aliase bereit' -ForEach @(
+        @{ Alias = 'Load-Config'; Target = 'Import-DocFlowConfig' }
+        @{ Alias = 'Load-State'; Target = 'Import-DocFlowState' }
+        @{ Alias = 'Ensure-TargetDirectories'; Target = 'Initialize-DocFlowTargetDirectories' }
+    ) {
+        (Get-Command -Name $Alias).ResolvedCommand.Name | Should -Be $Target
+    }
+
+    It 'exportiert die Aliase auch beim Import über das Modulmanifest' {
+        $manifest = Join-Path $PSScriptRoot '../scripts/DocFlowEngine.psd1'
+        $aliases = & (Get-Process -Id $PID).Path -NoProfile -Command "Import-Module '$manifest' -WarningAction SilentlyContinue; (Get-Module DocFlowEngine).ExportedAliases.Keys -join ','"
+        ($aliases -split ',' | Sort-Object) | Should -Be @('Ensure-TargetDirectories', 'Load-Config', 'Load-State')
+    }
+}
+
+Describe 'New-DocFlowSubmissionStem' {
+    It 'lässt die Versionsangabe bei Version 0 weg' {
+        New-DocFlowSubmissionStem -Initials 'pke' -Praefix 'Java' -Suffix 'Arrays' -Aufgabennummer 'abc' | Should -Be 'pke_Java_Arrays_abc'
+    }
+
+    It 'setzt die Versionsangabe hinter die Initialen' {
+        New-DocFlowSubmissionStem -Initials 'pke' -Version 3 -Praefix 'Java' -Suffix 'Arrays' -Aufgabennummer 'abc' | Should -Be 'pke_v3_Java_Arrays_abc'
     }
 }

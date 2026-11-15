@@ -100,7 +100,7 @@ function Expand-DocFlowConfigPaths {
     }
 }
 
-function Load-Config {
+function Import-DocFlowConfig {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [string]$Path
@@ -183,7 +183,7 @@ function Load-Config {
         $config.copyRetry.delaySeconds = 5
     }
 
-    $hintPatterns = @("*$($config.namingConventionHint.fileNameSuffix)", "*$($config.duplicateHint.fileNameSuffix)", '*.KUERZEL-UNBEKANNT.txt')
+    $hintPatterns = @("*$($config.namingConventionHint.fileNameSuffix)", "*$($config.duplicateHint.fileNameSuffix)", "*$Script:UnknownKuerzelHintSuffix")
     foreach ($source in @($config.sources)) {
         $excludes = @($source.excludePatterns | Where-Object { $_ })
         foreach ($hintPattern in $hintPatterns) {
@@ -201,10 +201,10 @@ function Load-Config {
         $config.reviewMarker.enabled = $false
     }
     if (-not $config.reviewMarker.pattern) {
-        $config.reviewMarker.pattern = '_k-[A-Za-z0-9]+$'
+        $config.reviewMarker.pattern = $Script:DefaultReviewMarkerPattern
     }
     if (-not $config.reviewMarker.korrigiertFolderName) {
-        $config.reviewMarker.korrigiertFolderName = 'Korrigiert'
+        $config.reviewMarker.korrigiertFolderName = $Script:DefaultKorrigiertFolderName
     }
     if (-not $config.reviewMarker.kuerzelRoutesFile) {
         $config.reviewMarker.kuerzelRoutesFile = './config/kuerzel-routes.txt'

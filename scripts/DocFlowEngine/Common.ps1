@@ -1,13 +1,15 @@
+$Script:LogLevels = @{ TRACE = 0; DEBUG = 1; INFO = 2; WARNING = 3; ERROR = 4 }
+$Script:DatePrefixPattern = '^\d{8}(?:\d{6})?_'
+$Script:DefaultReviewMarkerPattern = '_k-[A-Za-z0-9]+$'
+$Script:DefaultKorrigiertFolderName = 'Korrigiert'
+$Script:UnknownKuerzelHintSuffix = '.KUERZEL-UNBEKANNT.txt'
+
 function Write-Log {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [ValidateSet('Trace','Debug','Info','Warning','Error')] [string]$Level,
         [Parameter(Mandatory)] [string]$Message
     )
-
-    if (-not $Script:LogLevels) {
-        $Script:LogLevels = @{ TRACE = 0; DEBUG = 1; INFO = 2; WARNING = 3; ERROR = 4 }
-    }
 
     if ($null -eq $Script:CurrentLogLevel) {
         $Script:CurrentLogLevel = $Script:LogLevels['INFO']
@@ -155,7 +157,7 @@ function ConvertTo-DocFlowHashtable {
         }
 
         if ($InputObject -is [System.Collections.IEnumerable] -and $InputObject -isnot [string]) {
-            return @($InputObject | ForEach-Object { ConvertTo-DocFlowHashtable -InputObject $_ })
+            return ,@($InputObject | ForEach-Object { ConvertTo-DocFlowHashtable -InputObject $_ })
         }
 
         return $InputObject
@@ -193,7 +195,7 @@ function Copy-DocFlowFileWithRetry {
 
     for ($attempt = 1; $attempt -le $attempts; $attempt++) {
         try {
-            Copy-Item -Path $Source -Destination $Destination -Force -ErrorAction Stop
+            Copy-Item -LiteralPath $Source -Destination $Destination -Force -ErrorAction Stop
             $sourceLength = (Get-Item -LiteralPath $Source -Force -ErrorAction Stop).Length
             $destinationItem = Get-Item -LiteralPath $Destination -Force -ErrorAction Stop
             if ($destinationItem.Length -ne $sourceLength) {

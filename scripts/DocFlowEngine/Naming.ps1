@@ -89,26 +89,6 @@ function Resolve-CategoryTarget {
     return $null
 }
 
-function Get-FileProject {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [System.IO.FileInfo]$File,
-        [Parameter(Mandatory)] [array]$Rules
-    )
-
-    $originalName = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
-
-    foreach ($rule in $Rules) {
-        if ($originalName -match $rule.match) {
-            if ($Matches.ContainsKey('project')) {
-                return $Matches.project
-            }
-        }
-    }
-
-    return $null
-}
-
 function Get-FilePraefixSuffix {
     [CmdletBinding()]
     param(
@@ -172,9 +152,6 @@ function Write-NamingConventionHint {
 
     $hintFileName = "$($File.Name)$($HintConfig.fileNameSuffix)"
     $hintPath = Join-Path $File.DirectoryName $hintFileName
-    if (Test-Path $hintPath) {
-        return
-    }
 
     $context = [ordered]@{
         originalName = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
@@ -229,10 +206,24 @@ function Find-DocFlowExistingSubmission {
         return $null
     }
 
-    $pattern = '^\d{8}(?:\d{6})?_' + [regex]::Escape($File.Name) + '$'
+    $pattern = $Script:DatePrefixPattern + [regex]::Escape($File.Name) + '$'
     return Get-ChildItem -LiteralPath $TargetDirectory -File -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -match $pattern } |
         Select-Object -First 1
+}
+
+function New-DocFlowSubmissionStem {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Initials,
+        [int]$Version = 0,
+        [Parameter(Mandatory)] [string]$Praefix,
+        [Parameter(Mandatory)] [string]$Suffix,
+        [Parameter(Mandatory)] [string]$Aufgabennummer
+    )
+
+    $versionPart = if ($Version -gt 0) { "_v$Version" } else { '' }
+    return "${Initials}${versionPart}_${Praefix}_${Suffix}_${Aufgabennummer}"
 }
 
 function Get-DocFlowSuggestedVersionName {
@@ -240,7 +231,8 @@ function Get-DocFlowSuggestedVersionName {
     param(
         [Parameter(Mandatory)] [System.IO.FileInfo]$File,
         [Parameter(Mandatory)] [array]$Rules,
-        [string]$TargetDirectory
+        [string]$TargetDirectory,
+        [string]$ReviewMarkerPattern = $Script:DefaultReviewMarkerPattern
     )
 
     $originalName = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
@@ -251,12 +243,12 @@ function Get-DocFlowSuggestedVersionName {
 
     $candidates = @(Get-ChildItem -LiteralPath $File.DirectoryName -File -ErrorAction SilentlyContinue | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) })
     if ($TargetDirectory -and (Test-Path -LiteralPath $TargetDirectory)) {
-        $candidates += @(Get-ChildItem -LiteralPath $TargetDirectory -File -ErrorAction SilentlyContinue | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) -replace '^\d{8}(?:\d{6})?_', '' })
+        $candidates += @(Get-ChildItem -LiteralPath $TargetDirectory -File -ErrorAction SilentlyContinue | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) -replace $Script:DatePrefixPattern, '' })
     }
 
     $highestVersion = $parts.Version
     foreach ($candidate in $candidates) {
-        $candidateParts = Get-DocFlowSubmissionParts -Name ($candidate -replace '_k-[A-Za-z0-9]+$', '') -Rules $Rules
+        $candidateParts = Get-DocFlowSubmissionParts -Name ($candidate -replace $ReviewMarkerPattern, '') -Rules $Rules
         if ($candidateParts -and
             $candidateParts.Initials -eq $parts.Initials -and
             $candidateParts.Praefix -eq $parts.Praefix -and
@@ -268,7 +260,8 @@ function Get-DocFlowSuggestedVersionName {
     }
 
     $nextVersion = $highestVersion + 1
-    return "$($parts.Initials)_v$($nextVersion)_$($parts.Praefix)_$($parts.Suffix)_$($parts.Aufgabennummer)$($File.Extension)"
+    $stem = New-DocFlowSubmissionStem -Initials $parts.Initials -Version $nextVersion -Praefix $parts.Praefix -Suffix $parts.Suffix -Aufgabennummer $parts.Aufgabennummer
+    return "$stem$($File.Extension)"
 }
 
 function Write-DocFlowDuplicateHint {
@@ -326,8 +319,7 @@ function Get-DocFlowRegistryLines {
 function ConvertTo-DocFlowRegistryStructure {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)] [AllowEmptyCollection()] $Lines,
-        [string]$SourceName = ''
+        [Parameter(Mandatory)] [AllowEmptyCollection()] $Lines
     )
 
     $structure = [ordered]@{
@@ -553,54 +545,6 @@ function Test-DocFlowPraefixSuffixKnown {
     return $Registry.Praefixe.Contains($Praefix) -and $Registry.Suffixe.Contains($Suffix)
 }
 
-function Get-ProjectRoutes {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$Path
-    )
-
-    $routes = @{}
-
-    if (-not (Test-Path $Path)) {
-        Write-Log -Level Warning -Message "Projekt-Routing-Datei '$Path' wurde nicht gefunden."
-        return $routes
-    }
-
-    foreach ($line in Get-Content -Path $Path) {
-        $trimmed = $line.Trim()
-        if (-not $trimmed -or $trimmed.StartsWith('#')) {
-            continue
-        }
-
-        $separatorIndex = $trimmed.IndexOf('=')
-        if ($separatorIndex -lt 1) {
-            continue
-        }
-
-        $projectName = $trimmed.Substring(0, $separatorIndex).Trim()
-        $targetPath = $trimmed.Substring($separatorIndex + 1).Trim()
-        if ($projectName -and $targetPath) {
-            $routes[$projectName] = $targetPath
-        }
-    }
-
-    return $routes
-}
-
-function Resolve-ProjectTarget {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$ProjectName,
-        [Parameter(Mandatory)] [hashtable]$ProjectRoutes
-    )
-
-    if ($ProjectRoutes.ContainsKey($ProjectName)) {
-        return $ProjectRoutes[$ProjectName]
-    }
-
-    return $null
-}
-
 function ConvertTo-DocFlowAsciiName {
     [CmdletBinding()]
     param(
@@ -767,8 +711,7 @@ function Get-DocFlowNameProposal {
     if (-not $suffix) { $suffix = $Placeholder }
     if (-not $aufgabennummer) { $aufgabennummer = $Placeholder; $notes.Add('Aufgabennummer nicht erkannt') }
 
-    $versionPart = if ($version -gt 0) { "_v$version" } else { '' }
-    $stem = "${initials}${versionPart}_${praefix}_${suffix}_${aufgabennummer}"
+    $stem = New-DocFlowSubmissionStem -Initials $initials -Version $version -Praefix $praefix -Suffix $suffix -Aufgabennummer $aufgabennummer
 
     return [PSCustomObject]@{
         Stem = $stem

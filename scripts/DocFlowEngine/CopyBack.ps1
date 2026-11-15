@@ -85,12 +85,11 @@ function Copy-ReviewedFiles {
         return
     }
 
-    $unknownKuerzelSuffix = '.KUERZEL-UNBEKANNT.txt'
-    Remove-DocFlowOrphanedHintFiles -Directory $AufgabenRoot -HintSuffixes @($unknownKuerzelSuffix)
+    Remove-DocFlowOrphanedHintFiles -Directory $AufgabenRoot -HintSuffixes @($Script:UnknownKuerzelHintSuffix)
 
     $korrigiertFolderName = $ReviewMarker.korrigiertFolderName
     if (-not $korrigiertFolderName) {
-        $korrigiertFolderName = 'Korrigiert'
+        $korrigiertFolderName = $Script:DefaultKorrigiertFolderName
     }
 
     $pattern = [regex]::new($ReviewMarker.pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
@@ -101,7 +100,7 @@ function Copy-ReviewedFiles {
             continue
         }
 
-        if ($item.Name.EndsWith($unknownKuerzelSuffix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        if ($item.Name.EndsWith($Script:UnknownKuerzelHintSuffix, [System.StringComparison]::OrdinalIgnoreCase)) {
             continue
         }
 
@@ -116,15 +115,16 @@ function Copy-ReviewedFiles {
             continue
         }
 
-        $originalStem = $nameWithoutExtension.Substring(0, $markerMatch.Index) -replace '^\d{8}(?:\d{6})?_', ''
+        $originalStem = $nameWithoutExtension.Substring(0, $markerMatch.Index) -replace $Script:DatePrefixPattern, ''
         $kuerzel = Get-FileInitialsFromName -Name $originalStem -Rules $Rules
-        $hintPath = Join-Path $item.DirectoryName "$($item.Name)$unknownKuerzelSuffix"
+        $kuerzelKey = if ($kuerzel) { $kuerzel.ToLowerInvariant() } else { $null }
+        $hintPath = Join-Path $item.DirectoryName "$($item.Name)$Script:UnknownKuerzelHintSuffix"
 
-        if ($kuerzel -and $KuerzelRoutes.ContainsKey($kuerzel.ToLowerInvariant())) {
-            $studentFolder = $KuerzelRoutes[$kuerzel.ToLowerInvariant()]
+        if ($kuerzelKey -and $KuerzelRoutes.ContainsKey($kuerzelKey)) {
+            $studentFolder = $KuerzelRoutes[$kuerzelKey]
             $korrigiertFolder = Join-Path $studentFolder $korrigiertFolderName
 
-            if (-not (Test-Path $korrigiertFolder)) {
+            if (-not (Test-Path -LiteralPath $korrigiertFolder)) {
                 if ($Script:DryRun) {
                     Write-Log -Level Info -Message "[DryRun] Verzeichnis würde erstellt: $korrigiertFolder"
                 } else {
@@ -151,7 +151,7 @@ function Copy-ReviewedFiles {
             $State.reviewedFiles[$reviewKey] = [ordered]@{
                 source = $item.FullName
                 target = $destinationPath
-                kuerzel = $kuerzel.ToLowerInvariant()
+                kuerzel = $kuerzelKey
                 processedAt = (Get-Date).ToString('o')
             }
 
