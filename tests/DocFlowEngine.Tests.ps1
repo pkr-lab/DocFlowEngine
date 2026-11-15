@@ -1130,3 +1130,13 @@ Describe 'Modul-Exporte' {
         ($aliases -split ',' | Sort-Object) | Should -Be @('Ensure-TargetDirectories', 'Load-Config', 'Load-State')
     }
 }
+
+Describe 'New-DocFlowSubmissionStem' {
+    It 'lässt die Versionsangabe bei Version 0 weg' {
+        New-DocFlowSubmissionStem -Initials 'pke' -Praefix 'Java' -Suffix 'Arrays' -Aufgabennummer 'abc' | Should -Be 'pke_Java_Arrays_abc'
+    }
+
+    It 'setzt die Versionsangabe hinter die Initialen' {
+        New-DocFlowSubmissionStem -Initials 'pke' -Version 3 -Praefix 'Java' -Suffix 'Arrays' -Aufgabennummer 'abc' | Should -Be 'pke_v3_Java_Arrays_abc'
+    }
+}
