@@ -89,26 +89,6 @@ function Resolve-CategoryTarget {
     return $null
 }
 
-function Get-FileProject {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [System.IO.FileInfo]$File,
-        [Parameter(Mandatory)] [array]$Rules
-    )
-
-    $originalName = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
-
-    foreach ($rule in $Rules) {
-        if ($originalName -match $rule.match) {
-            if ($Matches.ContainsKey('project')) {
-                return $Matches.project
-            }
-        }
-    }
-
-    return $null
-}
-
 function Get-FilePraefixSuffix {
     [CmdletBinding()]
     param(
@@ -549,54 +529,6 @@ function Test-DocFlowPraefixSuffixKnown {
     }
 
     return $Registry.Praefixe.Contains($Praefix) -and $Registry.Suffixe.Contains($Suffix)
-}
-
-function Get-ProjectRoutes {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$Path
-    )
-
-    $routes = @{}
-
-    if (-not (Test-Path $Path)) {
-        Write-Log -Level Warning -Message "Projekt-Routing-Datei '$Path' wurde nicht gefunden."
-        return $routes
-    }
-
-    foreach ($line in Get-Content -Path $Path) {
-        $trimmed = $line.Trim()
-        if (-not $trimmed -or $trimmed.StartsWith('#')) {
-            continue
-        }
-
-        $separatorIndex = $trimmed.IndexOf('=')
-        if ($separatorIndex -lt 1) {
-            continue
-        }
-
-        $projectName = $trimmed.Substring(0, $separatorIndex).Trim()
-        $targetPath = $trimmed.Substring($separatorIndex + 1).Trim()
-        if ($projectName -and $targetPath) {
-            $routes[$projectName] = $targetPath
-        }
-    }
-
-    return $routes
-}
-
-function Resolve-ProjectTarget {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$ProjectName,
-        [Parameter(Mandatory)] [hashtable]$ProjectRoutes
-    )
-
-    if ($ProjectRoutes.ContainsKey($ProjectName)) {
-        return $ProjectRoutes[$ProjectName]
-    }
-
-    return $null
 }
 
 function ConvertTo-DocFlowAsciiName {
