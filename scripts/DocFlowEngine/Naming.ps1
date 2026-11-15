@@ -172,9 +172,6 @@ function Write-NamingConventionHint {
 
     $hintFileName = "$($File.Name)$($HintConfig.fileNameSuffix)"
     $hintPath = Join-Path $File.DirectoryName $hintFileName
-    if (Test-Path $hintPath) {
-        return
-    }
 
     $context = [ordered]@{
         originalName = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
