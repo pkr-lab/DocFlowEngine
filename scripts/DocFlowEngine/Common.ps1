@@ -195,7 +195,7 @@ function Copy-DocFlowFileWithRetry {
 
     for ($attempt = 1; $attempt -le $attempts; $attempt++) {
         try {
-            Copy-Item -Path $Source -Destination $Destination -Force -ErrorAction Stop
+            Copy-Item -LiteralPath $Source -Destination $Destination -Force -ErrorAction Stop
             $sourceLength = (Get-Item -LiteralPath $Source -Force -ErrorAction Stop).Length
             $destinationItem = Get-Item -LiteralPath $Destination -Force -ErrorAction Stop
             if ($destinationItem.Length -ne $sourceLength) {
