@@ -18,6 +18,28 @@ if (-not (Test-Path $modulePath)) {
 
 Import-Module -Name $modulePath -Force
 
+function New-RenameResult {
+    param(
+        [Parameter(Mandatory)] [string]$Status,
+        [Parameter(Mandatory)] [System.IO.FileInfo]$Item,
+        [Parameter(Mandatory)] [string]$NewName,
+        [Parameter(Mandatory)] [string]$NewPath,
+        [string]$Notes = ''
+    )
+
+    return [PSCustomObject]@{ Status = $Status; Ordner = $Item.DirectoryName; Alt = $Item.Name; Neu = $NewName; Hinweise = $Notes; AlterPfad = $Item.FullName; NeuerPfad = $NewPath; Ausgefuehrt = 'nein' }
+}
+
+function Get-RenameStem {
+    param(
+        [Parameter(Mandatory)] $Proposal,
+        [Parameter(Mandatory)] [int]$Version
+    )
+
+    $versionPart = if ($Version -gt 0) { "_v$Version" } else { '' }
+    return "$($Proposal.Initials)$($versionPart)_$($Proposal.Praefix)_$($Proposal.Suffix)_$($Proposal.Aufgabennummer)"
+}
+
 if ($Undo) {
     if (-not (Test-Path -LiteralPath $Undo)) {
         throw "Undo-Datei '$Undo' wurde nicht gefunden."
@@ -185,28 +207,26 @@ try {
         }
 
         if ($proposal.Compliant) {
-            $status = 'bereits regelkonform'
             if ($registry -and -not (Test-DocFlowPraefixSuffixKnown -Registry $registry -Praefix $proposal.Praefix -Suffix $proposal.Suffix)) {
                 $notes += "Kombination $($proposal.Praefix)/$($proposal.Suffix) steht nicht in der Whitelist"
             }
-            $results.Add([PSCustomObject]@{ Status = $status; Ordner = $item.DirectoryName; Alt = $item.Name; Neu = $item.Name; Hinweise = ($notes -join '; '); AlterPfad = $item.FullName; NeuerPfad = $item.FullName; Ausgefuehrt = 'nein' })
+            $results.Add((New-RenameResult -Status 'bereits regelkonform' -Item $item -NewName $item.Name -NewPath $item.FullName -Notes ($notes -join '; ')))
             [void]$plannedDestinations.Add($item.FullName)
             continue
         }
 
         if (-not $IncludeUnrecognized -and $proposal.Praefix -eq $Placeholder -and $proposal.Suffix -eq $Placeholder) {
-            $results.Add([PSCustomObject]@{ Status = 'unverändert (kein Fach erkannt)'; Ordner = $item.DirectoryName; Alt = $item.Name; Neu = $item.Name; Hinweise = "Vorschlag wäre '$($proposal.Stem)$extension'; mit -IncludeUnrecognized trotzdem umbenennen"; AlterPfad = $item.FullName; NeuerPfad = $item.FullName; Ausgefuehrt = 'nein' })
+            $results.Add((New-RenameResult -Status 'unverändert (kein Fach erkannt)' -Item $item -NewName $item.Name -NewPath $item.FullName -Notes "Vorschlag wäre '$($proposal.Stem)$extension'; mit -IncludeUnrecognized trotzdem umbenennen"))
             [void]$plannedDestinations.Add($item.FullName)
             continue
         }
 
         $version = $proposal.Version
-        $versionPart = if ($version -gt 0) { "_v$version" } else { '' }
-        $stem = "$($proposal.Initials)$($versionPart)_$($proposal.Praefix)_$($proposal.Suffix)_$($proposal.Aufgabennummer)"
+        $stem = Get-RenameStem -Proposal $proposal -Version $version
         $destinationPath = Join-Path $item.DirectoryName "$stem$extension"
         while (((Test-Path -LiteralPath $destinationPath) -and -not $destinationPath.Equals($item.FullName, [System.StringComparison]::OrdinalIgnoreCase)) -or $plannedDestinations.Contains($destinationPath)) {
             $version = [Math]::Max($version, 1) + 1
-            $stem = "$($proposal.Initials)_v$($version)_$($proposal.Praefix)_$($proposal.Suffix)_$($proposal.Aufgabennummer)"
+            $stem = Get-RenameStem -Proposal $proposal -Version $version
             $destinationPath = Join-Path $item.DirectoryName "$stem$extension"
         }
         if ($version -ne $proposal.Version) {
@@ -215,7 +235,7 @@ try {
         [void]$plannedDestinations.Add($destinationPath)
 
         $status = if ($proposal.HasPlaceholder) { 'umbenannt mit Platzhalter' } else { 'umbenannt' }
-        $results.Add([PSCustomObject]@{ Status = $status; Ordner = $item.DirectoryName; Alt = $item.Name; Neu = "$stem$extension"; Hinweise = ($notes -join '; '); AlterPfad = $item.FullName; NeuerPfad = $destinationPath; Ausgefuehrt = 'nein' })
+        $results.Add((New-RenameResult -Status $status -Item $item -NewName "$stem$extension" -NewPath $destinationPath -Notes ($notes -join '; ')))
     }
 
     if ($Apply) {
