@@ -142,6 +142,32 @@ function Complete-DocFlowProcessedFile {
     }
 }
 
+function Get-DocFlowWhitelistRejectionReason {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [PSCustomObject]$PraefixSuffix,
+        $Registry
+    )
+
+    if ($Registry -and $Registry.Contains('Paare') -and $Registry.Paare) {
+        if (-not $Registry.Paare.ContainsKey($PraefixSuffix.Praefix)) {
+            return "Präfix '$($PraefixSuffix.Praefix)' ist nicht"
+        }
+
+        return "Suffix '$($PraefixSuffix.Suffix)' ist für Präfix '$($PraefixSuffix.Praefix)' nicht"
+    }
+
+    $unknownParts = @()
+    if (-not ($Registry -and $Registry.Praefixe -and $Registry.Praefixe.Contains($PraefixSuffix.Praefix))) {
+        $unknownParts += "Präfix '$($PraefixSuffix.Praefix)'"
+    }
+    if (-not ($Registry -and $Registry.Suffixe -and $Registry.Suffixe.Contains($PraefixSuffix.Suffix))) {
+        $unknownParts += "Suffix '$($PraefixSuffix.Suffix)'"
+    }
+
+    return "$($unknownParts -join ' und ') nicht"
+}
+
 function Copy-NewFiles {
     [CmdletBinding()]
     param(
@@ -271,22 +297,7 @@ function Copy-NewFiles {
                         $routedToAufgaben = $true
                     } elseif ($NamingConventionHint -and $NamingConventionHint.enabled) {
                         if ($praefixSuffix) {
-                            if ($PraefixSuffixRegistry -and $PraefixSuffixRegistry.Contains('Paare') -and $PraefixSuffixRegistry.Paare) {
-                                if (-not $PraefixSuffixRegistry.Paare.ContainsKey($praefixSuffix.Praefix)) {
-                                    $reason = "Präfix '$($praefixSuffix.Praefix)' ist nicht"
-                                } else {
-                                    $reason = "Suffix '$($praefixSuffix.Suffix)' ist für Präfix '$($praefixSuffix.Praefix)' nicht"
-                                }
-                            } else {
-                                $unknownParts = @()
-                                if (-not ($PraefixSuffixRegistry -and $PraefixSuffixRegistry.Praefixe -and $PraefixSuffixRegistry.Praefixe.Contains($praefixSuffix.Praefix))) {
-                                    $unknownParts += "Präfix '$($praefixSuffix.Praefix)'"
-                                }
-                                if (-not ($PraefixSuffixRegistry -and $PraefixSuffixRegistry.Suffixe -and $PraefixSuffixRegistry.Suffixe.Contains($praefixSuffix.Suffix))) {
-                                    $unknownParts += "Suffix '$($praefixSuffix.Suffix)'"
-                                }
-                                $reason = "$($unknownParts -join ' und ') nicht"
-                            }
+                            $reason = Get-DocFlowWhitelistRejectionReason -PraefixSuffix $praefixSuffix -Registry $PraefixSuffixRegistry
                             Write-Log -Level Warning -Message "Datei '$($item.Name)': $reason in der Whitelist '$RegistryFilePath' eingetragen."
                         } else {
                             Write-Log -Level Warning -Message "Datei '$($item.Name)' passt nicht zum Schema initialen[_v<version>]_praefix_suffix_aufgabennummer (nur Buchstaben/Ziffern, keine Leerzeichen, Bindestriche oder Umlaute)."
