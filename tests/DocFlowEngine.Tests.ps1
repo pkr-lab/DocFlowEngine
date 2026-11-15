@@ -1140,3 +1140,273 @@ Describe 'New-DocFlowSubmissionStem' {
         New-DocFlowSubmissionStem -Initials 'pke' -Version 3 -Praefix 'Java' -Suffix 'Arrays' -Aufgabennummer 'abc' | Should -Be 'pke_v3_Java_Arrays_abc'
     }
 }
+
+Describe 'Resolve-PathOrAbsolute' {
+    It 'gibt für einen existierenden Pfad den aufgelösten Pfad zurück' {
+        $dir = New-Item -Path (Join-Path $TestDrive "vorhanden-$(New-Guid)") -ItemType Directory -Force
+        Resolve-PathOrAbsolute -PathValue $dir.FullName | Should -Be $dir.FullName
+    }
+
+    It 'löst Wildcards über das nächste existierende übergeordnete Verzeichnis auf' {
+        $base = Join-Path $TestDrive "wild-$(New-Guid)"
+        New-Item -Path (Join-Path $base 'Jahrgang-2026') -ItemType Directory -Force | Out-Null
+        $expected = Join-Path (Join-Path (Join-Path $base 'Jahrgang-2026') 'neu') 'datei.txt'
+
+        Resolve-PathOrAbsolute -PathValue (Join-Path $base 'Jahrgang-*/neu/datei.txt') | Should -Be $expected
+    }
+
+    It 'wirft einen Fehler, wenn für einen relativen Wildcard-Pfad kein übergeordnetes Verzeichnis existiert' {
+        Push-Location $TestDrive
+        try {
+            { Resolve-PathOrAbsolute -PathValue "gibt-es-nicht-$(New-Guid)-*/datei.txt" } | Should -Throw '*Wildcards*'
+        } finally {
+            Pop-Location
+        }
+    }
+
+    It 'macht einen nicht existierenden relativen Pfad relativ zum aktuellen Verzeichnis absolut' {
+        Push-Location $TestDrive
+        try {
+            Resolve-PathOrAbsolute -PathValue "neu-$(New-Guid)-x/datei.txt" | Should -BeLike (Join-Path $TestDrive '*-x*datei.txt')
+        } finally {
+            Pop-Location
+        }
+    }
+}
+
+Describe 'Invoke-OneDriveSync.ps1' {
+    It 'beendet sich mit Exit-Code 0 und einer Warnung, wenn OneDrive.exe fehlt' {
+        $script = Join-Path $PSScriptRoot '../scripts/Invoke-OneDriveSync.ps1'
+        $missing = Join-Path $TestDrive 'gibt-es-nicht/OneDrive.exe'
+
+        $output = & (Get-Process -Id $PID).Path -NoProfile -File $script -ExecutablePath $missing 3>&1 2>&1 | Out-String
+
+        $LASTEXITCODE | Should -Be 0
+        $output | Should -Match 'OneDrive\.exe wurde nicht gefunden'
+    }
+}
+
+Describe 'Invoke-DocFlowEngine (Ende-zu-Ende)' {
+    BeforeEach {
+        $script:e2eRoot = Join-Path $TestDrive "e2e-$(New-Guid)"
+        $script:e2eStudent = Join-Path $script:e2eRoot 'quelle/pke'
+        $script:e2eShared = Join-Path $script:e2eRoot 'shared'
+        $script:e2eAufgaben = Join-Path $script:e2eRoot 'aufgaben'
+        New-Item -Path $script:e2eStudent, $script:e2eShared -ItemType Directory -Force | Out-Null
+        Set-Content -Path (Join-Path $script:e2eShared 'project-routes.txt') -Value @('praefix=Java', 'suffix=Arrays')
+        foreach ($name in @('pke_Java_Arrays_1.pdf', 'pke_Ruby_Arrays_1.pdf', 'kaputt.pdf')) {
+            Set-Content -Path (Join-Path $script:e2eStudent $name) -Value 'x'
+        }
+
+        $script:e2eConfig = Join-Path $script:e2eRoot 'config.psd1'
+        @"
+@{
+    sources = @(@{ path = '$($script:e2eRoot)/quelle'; recursive = `$true; includePatterns = @('*.pdf'); excludePatterns = @() })
+    aufgabenRoot = '$($script:e2eAufgaben)'
+    namingConventions = @(
+        @{
+            match  = '^(?<initials>[A-Za-z]+)(?<versiontag>_v[0-9]+)?_(?<praefix>[A-Za-z]+)_(?<suffix>[A-Za-z0-9]+)_(?<aufgabennummer>[A-Za-z0-9]+)$'
+            rename = '{initials}{versiontag}_{praefix}_{suffix}_{aufgabennummer}'
+        }
+    )
+    projectRoutesFile = '$($script:e2eShared)/project-routes.txt'
+    projectRoutesSeedFile = '$($script:e2eShared)/project-routes.txt'
+    reviewMarker = @{ enabled = `$true; kuerzelRoutesFile = '$($script:e2eShared)/kuerzel-routes.txt' }
+    minFileAgeMinutes = 0
+    stateFile = '$($script:e2eShared)/state.json'
+    lockFile = '$($script:e2eShared)/.docflow-lock'
+    log = @{ level = 'Info'; file = '$($script:e2eShared)/docflow.log' }
+}
+"@ | Set-Content -Path $script:e2eConfig
+    }
+
+    AfterAll {
+        InModuleScope DocFlowEngine {
+            $Script:DryRun = $false
+            $Script:LogFilePath = $null
+            $Script:CurrentLogLevel = $null
+        }
+    }
+
+    It 'verändert im DryRun nichts außer dem Log' {
+        Invoke-DocFlowEngine -ConfigPath $script:e2eConfig -DryRun 6>$null
+
+        Test-Path $script:e2eAufgaben | Should -BeFalse
+        Test-Path (Join-Path $script:e2eShared 'state.json') | Should -BeFalse
+        Test-Path (Join-Path $script:e2eShared 'kuerzel-routes.txt') | Should -BeFalse
+        Test-Path (Join-Path $script:e2eShared '.docflow-lock') | Should -BeFalse
+        (Get-Content -Path (Join-Path $script:e2eShared 'docflow.log') -Raw) | Should -Match '\[DryRun\] Datei würde kopiert'
+        @(Get-ChildItem -Path $script:e2eStudent -Filter '*.txt').Count | Should -Be 0
+    }
+
+    It 'kopiert gültige Abgaben, schreibt Hinweise, Zustand, Kürzel-Registry und Log und gibt die Sperre frei' {
+        Invoke-DocFlowEngine -ConfigPath $script:e2eConfig 6>$null
+
+        Test-Path (Join-Path $script:e2eAufgaben 'Java/Arrays/pke_Java_Arrays_1.pdf') | Should -BeTrue
+        Test-Path (Join-Path $script:e2eAufgaben 'Ruby') | Should -BeFalse
+        Test-Path (Join-Path $script:e2eStudent 'pke_Ruby_Arrays_1.pdf.NAMENSKONVENTION-FEHLER.txt') | Should -BeTrue
+        Test-Path (Join-Path $script:e2eStudent 'kaputt.pdf.NAMENSKONVENTION-FEHLER.txt') | Should -BeTrue
+        Test-Path (Join-Path $script:e2eShared '.docflow-lock') | Should -BeFalse
+        (Get-Content -Path (Join-Path $script:e2eShared 'kuerzel-routes.txt')) | Should -Be "pke=$($script:e2eStudent)"
+        (Get-Content -Path (Join-Path $script:e2eShared 'docflow.log') -Raw) | Should -Match 'Verarbeitung abgeschlossen'
+
+        $state = Import-DocFlowState -StatePath (Join-Path $script:e2eShared 'state.json')
+        @($state.processed.Keys).Count | Should -Be 1
+    }
+
+    It 'meldet eine bereits verarbeitete Datei beim zweiten Lauf nur als übersprungen' {
+        Invoke-DocFlowEngine -ConfigPath $script:e2eConfig 6>$null
+        Invoke-DocFlowEngine -ConfigPath $script:e2eConfig 6>$null
+
+        (Get-Content -Path (Join-Path $script:e2eShared 'docflow.log') -Raw) | Should -Match 'Bereits in früheren Läufen verarbeitet und daher übersprungen: 1'
+        @(Get-ChildItem -Path (Join-Path $script:e2eAufgaben 'Java/Arrays')).Count | Should -Be 1
+    }
+
+    It 'überspringt den Lauf, solange eine frische Sperre einer anderen Instanz besteht' {
+        Set-Content -Path (Join-Path $script:e2eShared '.docflow-lock') -Value 'anderer-rechner|1|2026-01-01'
+
+        Invoke-DocFlowEngine -ConfigPath $script:e2eConfig 6>$null
+
+        Test-Path $script:e2eAufgaben | Should -BeFalse
+        Test-Path (Join-Path $script:e2eShared '.docflow-lock') | Should -BeTrue
+        Test-Path (Join-Path $script:e2eShared 'state.json') | Should -BeFalse
+    }
+}
+
+Describe 'Get-DocFlowNameProposal' {
+    BeforeAll {
+        $script:proposalRules = @(
+            @{ match = '^(?<initials>[A-Za-z]+)(?<versiontag>_v[0-9]+)?_(?<praefix>[A-Za-z]+)_(?<suffix>[A-Za-z0-9]+)_(?<aufgabennummer>[A-Za-z0-9]+)$' }
+        )
+        $registryPath = Join-Path $TestDrive 'proposal-registry.txt'
+        Set-Content -Path $registryPath -Value @('praefix=Java', 'suffix=Arrays', 'suffix=ArrayList', 'suffix=Streams', 'praefix=Python', 'suffix=Streams', 'suffix=Dict', 'praefix=Datenbanken', 'suffix=SQL')
+        $script:proposalRegistries = @{
+            pairs = Get-PraefixSuffixRegistry -Path $registryPath
+            flat  = [ordered]@{
+                Praefixe = [System.Collections.Generic.HashSet[string]]::new([string[]]@('Java', 'Python'), [System.StringComparer]::OrdinalIgnoreCase)
+                Suffixe  = [System.Collections.Generic.HashSet[string]]::new([string[]]@('Arrays', 'Dict'), [System.StringComparer]::OrdinalIgnoreCase)
+            }
+            none  = $null
+        }
+    }
+
+    It "'<Name>' (<Registry>) wird zu '<Stem>'" -ForEach @(
+        @{ Name = 'pke Java Python Streams 1'; Registry = 'pairs'; Known = $null; Stem = 'pke_PLATZHALTER_PLATZHALTER_1'; Compliant = $false; Version = 0; Placeholder = $true; Notes = @('Präfix/Suffix mehrdeutig', 'Initialen aus Dateinamen übernommen') }
+        @{ Name = 'pke Java Python Streams 1'; Registry = 'flat'; Known = $null; Stem = 'pke_PLATZHALTER_PLATZHALTER_1'; Compliant = $false; Version = 0; Placeholder = $true; Notes = @('Initialen aus Dateinamen übernommen') }
+        @{ Name = 'pke_v2_Java_Arrays_abc'; Registry = 'pairs'; Known = $null; Stem = 'pke_v2_Java_Arrays_abc'; Compliant = $true; Version = 2; Placeholder = $false; Notes = @() }
+        @{ Name = 'pke Java Arrays Blatt3'; Registry = 'pairs'; Known = $null; Stem = 'pke_Java_Arrays_Blatt3'; Compliant = $false; Version = 0; Placeholder = $false; Notes = @('Initialen aus Dateinamen übernommen') }
+        @{ Name = 'pke Java ArrayList Arrays 4'; Registry = 'pairs'; Known = $null; Stem = 'pke_Java_ArrayList_4'; Compliant = $false; Version = 0; Placeholder = $false; Notes = @('Initialen aus Dateinamen übernommen') }
+        @{ Name = 'pke Streams 4'; Registry = 'pairs'; Known = $null; Stem = 'pke_PLATZHALTER_Streams_4'; Compliant = $false; Version = 0; Placeholder = $true; Notes = @("Suffix 'Streams' passt zu mehreren Präfixen (Java, Python)", 'Initialen aus Dateinamen übernommen') }
+        @{ Name = 'pke JavaArrays 4'; Registry = 'pairs'; Known = $null; Stem = 'pke_Java_Arrays_4'; Compliant = $false; Version = 0; Placeholder = $false; Notes = @('Präfix/Suffix aus zusammengeschriebenem Namen erkannt', 'Initialen aus Dateinamen übernommen') }
+        @{ Name = 'pke Dict 7'; Registry = 'pairs'; Known = $null; Stem = 'pke_Python_Dict_7'; Compliant = $false; Version = 0; Placeholder = $false; Notes = @("Präfix aus Suffix 'Dict' abgeleitet", 'Initialen aus Dateinamen übernommen') }
+        @{ Name = 'pke Java 7'; Registry = 'pairs'; Known = $null; Stem = 'pke_Java_PLATZHALTER_7'; Compliant = $false; Version = 0; Placeholder = $true; Notes = @('Suffix nicht erkannt', 'Initialen aus Dateinamen übernommen') }
+        @{ Name = 'Datenbanken pke 2'; Registry = 'pairs'; Known = $null; Stem = 'pke_Datenbanken_PLATZHALTER_2'; Compliant = $false; Version = 0; Placeholder = $true; Notes = @('Suffix nicht erkannt', 'Initialen aus Dateinamen übernommen') }
+        @{ Name = 'Lösung Übung Java Arrays v3 Aufgabe 5 - Kopie (2)'; Registry = 'pairs'; Known = 'ahf'; Stem = 'ahf_v3_Java_Arrays_5'; Compliant = $false; Version = 3; Placeholder = $false; Notes = @() }
+        @{ Name = 'Kopie von pke Java Arrays final'; Registry = 'pairs'; Known = $null; Stem = 'pke_Java_Arrays_PLATZHALTER'; Compliant = $false; Version = 0; Placeholder = $true; Notes = @('Initialen aus Dateinamen übernommen', 'Aufgabennummer nicht erkannt') }
+        @{ Name = 'irgendwas komplett anderes'; Registry = 'pairs'; Known = $null; Stem = 'PLATZHALTER_PLATZHALTER_PLATZHALTER_anderes'; Compliant = $false; Version = 0; Placeholder = $true; Notes = @('Präfix/Suffix nicht erkannt', 'Initialen nicht erkannt') }
+        @{ Name = 'pke Python Dict 9'; Registry = 'flat'; Known = $null; Stem = 'pke_Python_Dict_9'; Compliant = $false; Version = 0; Placeholder = $false; Notes = @('Initialen aus Dateinamen übernommen') }
+        @{ Name = 'pke Java Arrays 1'; Registry = 'none'; Known = $null; Stem = 'pke_PLATZHALTER_PLATZHALTER_1'; Compliant = $false; Version = 0; Placeholder = $true; Notes = @('Initialen aus Dateinamen übernommen') }
+    ) {
+        $proposal = Get-DocFlowNameProposal -Name $Name -Rules $script:proposalRules -Registry $script:proposalRegistries[$Registry] -KnownInitials $Known
+
+        $proposal.Stem | Should -BeExactly $Stem
+        $proposal.Compliant | Should -Be $Compliant
+        $proposal.Version | Should -Be $Version
+        $proposal.HasPlaceholder | Should -Be $Placeholder
+        @($proposal.Notes) | Should -Be $Notes
+    }
+}
+
+Describe 'Import-DocFlowConfig: Standardwerte' {
+    BeforeAll {
+        $script:writeConfig = {
+            param([string]$Extra)
+            $path = Join-Path $TestDrive "cfg-$(New-Guid).psd1"
+            @"
+@{
+    sources = @(@{ path = './quelle'; includePatterns = @('*.pdf') })
+    targets = @(@{ path = './ziel' })
+    namingConventions = @(@{ match = '^(?<name>.+)$'; rename = '{name}' })
+$Extra
+}
+"@ | Set-Content -Path $path
+            return $path
+        }
+    }
+
+    It 'ergänzt bei einer minimalen Konfiguration alle Standardwerte' {
+        $config = Import-DocFlowConfig -Path (& $script:writeConfig '')
+
+        $config.defaultNameFormat | Should -Be '{timestamp}_{originalName}'
+        $config.stateFile | Should -Be './.docflow-state.json'
+        $config.stateRetentionYears | Should -Be 3
+        $config.log.level | Should -Be 'Info'
+        $config.log.file | Should -Be './docflow.log'
+        $config.namingConventionHint.enabled | Should -BeTrue
+        $config.namingConventionHint.fileNameSuffix | Should -Be '.NAMENSKONVENTION-FEHLER.txt'
+        $config.namingConventionHint.message | Should -Match 'entspricht nicht dem vorgegebenen Namensschema'
+        $config.duplicateHint.enabled | Should -BeTrue
+        $config.duplicateHint.fileNameSuffix | Should -Be '.BEREITS-ABGEGEBEN.txt'
+        $config.duplicateHint.message | Should -Match '\{suggestedName\}'
+        $config.minFileAgeMinutes | Should -Be 2
+        $config.copyRetry.count | Should -Be 2
+        $config.copyRetry.delaySeconds | Should -Be 5
+        $config.reviewMarker.enabled | Should -BeFalse
+        $config.reviewMarker.pattern | Should -Be '_k-[A-Za-z0-9]+$'
+        $config.reviewMarker.korrigiertFolderName | Should -Be 'Korrigiert'
+        $config.reviewMarker.kuerzelRoutesFile | Should -Be './config/kuerzel-routes.txt'
+        $config.unknownKuerzelHint.enabled | Should -BeTrue
+        $config.unknownKuerzelHint.message | Should -Match '\{kuerzel\}'
+        $config.projectRoutesSeedFile | Should -Be './config/project-routes.txt'
+        $config.ContainsKey('lockFile') | Should -BeTrue
+        $config.lockFile | Should -BeNullOrEmpty
+        $config.lockTimeoutMinutes | Should -Be 15
+        $config.sources[0].excludePatterns | Should -Be @('*.NAMENSKONVENTION-FEHLER.txt', '*.BEREITS-ABGEGEBEN.txt', '*.KUERZEL-UNBEKANNT.txt')
+    }
+
+    It 'behält ausdrücklich gesetzte falsy-Werte, wo nur fehlende Schlüssel ergänzt werden' {
+        $extra = @'
+    minFileAgeMinutes = 0
+    copyRetry = @{ count = 0; delaySeconds = 0 }
+    namingConventionHint = @{ enabled = $false; fileNameSuffix = '.EIGEN.txt' }
+    duplicateHint = @{ enabled = $false }
+    unknownKuerzelHint = @{ enabled = $false }
+    reviewMarker = @{ enabled = $true; pattern = '_korr$' }
+    projectRoutesSeedFile = ''
+    log = @{ level = 'Debug' }
+'@
+        $config = Import-DocFlowConfig -Path (& $script:writeConfig $extra)
+
+        $config.minFileAgeMinutes | Should -Be 0
+        $config.copyRetry.count | Should -Be 0
+        $config.copyRetry.delaySeconds | Should -Be 0
+        $config.namingConventionHint.enabled | Should -BeFalse
+        $config.namingConventionHint.fileNameSuffix | Should -Be '.EIGEN.txt'
+        $config.duplicateHint.enabled | Should -BeFalse
+        $config.unknownKuerzelHint.enabled | Should -BeFalse
+        $config.reviewMarker.enabled | Should -BeTrue
+        $config.reviewMarker.pattern | Should -Be '_korr$'
+        $config.projectRoutesSeedFile | Should -Be ''
+        $config.log.level | Should -Be 'Debug'
+        $config.log.file | Should -BeNullOrEmpty
+        $config.sources[0].excludePatterns | Should -Contain '*.EIGEN.txt'
+    }
+
+    It 'ersetzt leere Werte, wo leere Angaben als fehlend gelten' {
+        $extra = @'
+    defaultNameFormat = ''
+    stateFile = ''
+    stateRetentionYears = 0
+    lockTimeoutMinutes = 0
+    namingConventionHint = @{ fileNameSuffix = ''; message = '' }
+'@
+        $config = Import-DocFlowConfig -Path (& $script:writeConfig $extra)
+
+        $config.defaultNameFormat | Should -Be '{timestamp}_{originalName}'
+        $config.stateFile | Should -Be './.docflow-state.json'
+        $config.stateRetentionYears | Should -Be 3
+        $config.lockTimeoutMinutes | Should -Be 15
+        $config.namingConventionHint.fileNameSuffix | Should -Be '.NAMENSKONVENTION-FEHLER.txt'
+        $config.namingConventionHint.message | Should -Not -BeNullOrEmpty
+    }
+}

@@ -100,6 +100,41 @@ function Expand-DocFlowConfigPaths {
     }
 }
 
+function Get-DocFlowConfigSection {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [hashtable]$Config,
+        [Parameter(Mandatory)] [string]$Name
+    )
+
+    if (-not $Config[$Name]) {
+        $Config[$Name] = @{}
+    }
+
+    return $Config[$Name]
+}
+
+function Set-DocFlowDefaults {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [hashtable]$Section,
+        [hashtable]$IfMissing = @{},
+        [hashtable]$IfEmpty = @{}
+    )
+
+    foreach ($key in $IfMissing.Keys) {
+        if (-not $Section.ContainsKey($key)) {
+            $Section[$key] = $IfMissing[$key]
+        }
+    }
+
+    foreach ($key in $IfEmpty.Keys) {
+        if (-not $Section[$key]) {
+            $Section[$key] = $IfEmpty[$key]
+        }
+    }
+}
+
 function Import-DocFlowConfig {
     [CmdletBinding()]
     param(
@@ -128,59 +163,41 @@ function Import-DocFlowConfig {
         throw "Konfiguration muss mindestens eine Regel unter 'namingConventions' enthalten."
     }
 
-    if (-not $config.defaultNameFormat) {
-        $config.defaultNameFormat = '{timestamp}_{originalName}'
-    }
-
-    if (-not $config.stateFile) {
-        $config.stateFile = './.docflow-state.json'
-    }
-    if (-not $config.stateRetentionYears) {
-        $config.stateRetentionYears = 3
+    Set-DocFlowDefaults -Section $config -IfEmpty @{
+        defaultNameFormat = '{timestamp}_{originalName}'
+        stateFile = './.docflow-state.json'
+        stateRetentionYears = 3
+        lockTimeoutMinutes = 15
+    } -IfMissing @{
+        minFileAgeMinutes = 2
+        projectRoutesSeedFile = './config/project-routes.txt'
+        lockFile = $null
     }
 
     if (-not $config.log) {
         $config.log = @{ level = 'Info'; file = './docflow.log' }
     }
 
-    if (-not $config.namingConventionHint) {
-        $config.namingConventionHint = @{}
-    }
-    if (-not $config.namingConventionHint.ContainsKey('enabled')) {
-        $config.namingConventionHint.enabled = $true
-    }
-    if (-not $config.namingConventionHint.fileNameSuffix) {
-        $config.namingConventionHint.fileNameSuffix = '.NAMENSKONVENTION-FEHLER.txt'
-    }
-    if (-not $config.namingConventionHint.message) {
-        $config.namingConventionHint.message = 'Deine Datei "{fileName}" entspricht nicht dem vorgegebenen Namensschema (initialen_praefix_suffix_aufgabennummer). Bitte benenne die Datei entsprechend um und lade sie erneut hoch.'
+    Set-DocFlowDefaults -Section (Get-DocFlowConfigSection -Config $config -Name 'namingConventionHint') -IfMissing @{ enabled = $true } -IfEmpty @{
+        fileNameSuffix = '.NAMENSKONVENTION-FEHLER.txt'
+        message = 'Deine Datei "{fileName}" entspricht nicht dem vorgegebenen Namensschema (initialen_praefix_suffix_aufgabennummer). Bitte benenne die Datei entsprechend um und lade sie erneut hoch.'
     }
 
-    if (-not $config.duplicateHint) {
-        $config.duplicateHint = @{}
-    }
-    if (-not $config.duplicateHint.ContainsKey('enabled')) {
-        $config.duplicateHint.enabled = $true
-    }
-    if (-not $config.duplicateHint.fileNameSuffix) {
-        $config.duplicateHint.fileNameSuffix = '.BEREITS-ABGEGEBEN.txt'
-    }
-    if (-not $config.duplicateHint.message) {
-        $config.duplicateHint.message = 'Deine Datei "{fileName}" wurde bereits abgegeben. Falls es sich um eine neue Version handelt, benenne sie bitte mit Versionsangabe um, z. B. "{suggestedName}", und lade sie erneut hoch.'
+    Set-DocFlowDefaults -Section (Get-DocFlowConfigSection -Config $config -Name 'duplicateHint') -IfMissing @{ enabled = $true } -IfEmpty @{
+        fileNameSuffix = '.BEREITS-ABGEGEBEN.txt'
+        message = 'Deine Datei "{fileName}" wurde bereits abgegeben. Falls es sich um eine neue Version handelt, benenne sie bitte mit Versionsangabe um, z. B. "{suggestedName}", und lade sie erneut hoch.'
     }
 
-    if (-not $config.ContainsKey('minFileAgeMinutes')) {
-        $config.minFileAgeMinutes = 2
+    Set-DocFlowDefaults -Section (Get-DocFlowConfigSection -Config $config -Name 'copyRetry') -IfMissing @{ count = 2; delaySeconds = 5 }
+
+    Set-DocFlowDefaults -Section (Get-DocFlowConfigSection -Config $config -Name 'reviewMarker') -IfMissing @{ enabled = $false } -IfEmpty @{
+        pattern = $Script:DefaultReviewMarkerPattern
+        korrigiertFolderName = $Script:DefaultKorrigiertFolderName
+        kuerzelRoutesFile = './config/kuerzel-routes.txt'
     }
 
-    if (-not $config.copyRetry) {
-        $config.copyRetry = @{}
-    }
-    if (-not $config.copyRetry.ContainsKey('count')) {
-        $config.copyRetry.count = 2
-    }
-    if (-not $config.copyRetry.ContainsKey('delaySeconds')) {
-        $config.copyRetry.delaySeconds = 5
+    Set-DocFlowDefaults -Section (Get-DocFlowConfigSection -Config $config -Name 'unknownKuerzelHint') -IfMissing @{ enabled = $true } -IfEmpty @{
+        message = 'Die Datei "{fileName}" ist als Korrektur markiert, aber für das im Dateinamen erkannte Kürzel "{kuerzel}" ist noch kein Schülerordner bekannt (kuerzel-routes.txt). Bitte prüfen, oder den Schüler einmal regulär hochladen lassen, damit das Kürzel automatisch registriert wird.'
     }
 
     $hintPatterns = @("*$($config.namingConventionHint.fileNameSuffix)", "*$($config.duplicateHint.fileNameSuffix)", "*$Script:UnknownKuerzelHintSuffix")
@@ -192,43 +209,6 @@ function Import-DocFlowConfig {
             }
         }
         $source.excludePatterns = $excludes
-    }
-
-    if (-not $config.reviewMarker) {
-        $config.reviewMarker = @{ enabled = $false }
-    }
-    if (-not $config.reviewMarker.ContainsKey('enabled')) {
-        $config.reviewMarker.enabled = $false
-    }
-    if (-not $config.reviewMarker.pattern) {
-        $config.reviewMarker.pattern = $Script:DefaultReviewMarkerPattern
-    }
-    if (-not $config.reviewMarker.korrigiertFolderName) {
-        $config.reviewMarker.korrigiertFolderName = $Script:DefaultKorrigiertFolderName
-    }
-    if (-not $config.reviewMarker.kuerzelRoutesFile) {
-        $config.reviewMarker.kuerzelRoutesFile = './config/kuerzel-routes.txt'
-    }
-
-    if (-not $config.unknownKuerzelHint) {
-        $config.unknownKuerzelHint = @{}
-    }
-    if (-not $config.unknownKuerzelHint.ContainsKey('enabled')) {
-        $config.unknownKuerzelHint.enabled = $true
-    }
-    if (-not $config.unknownKuerzelHint.message) {
-        $config.unknownKuerzelHint.message = 'Die Datei "{fileName}" ist als Korrektur markiert, aber für das im Dateinamen erkannte Kürzel "{kuerzel}" ist noch kein Schülerordner bekannt (kuerzel-routes.txt). Bitte prüfen, oder den Schüler einmal regulär hochladen lassen, damit das Kürzel automatisch registriert wird.'
-    }
-
-    if (-not $config.ContainsKey('projectRoutesSeedFile')) {
-        $config.projectRoutesSeedFile = './config/project-routes.txt'
-    }
-
-    if (-not $config.ContainsKey('lockFile')) {
-        $config.lockFile = $null
-    }
-    if (-not $config.lockTimeoutMinutes) {
-        $config.lockTimeoutMinutes = 15
     }
 
     Expand-DocFlowConfigPaths -Config $config
