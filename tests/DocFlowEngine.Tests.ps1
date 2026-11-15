@@ -1140,3 +1140,135 @@ Describe 'New-DocFlowSubmissionStem' {
         New-DocFlowSubmissionStem -Initials 'pke' -Version 3 -Praefix 'Java' -Suffix 'Arrays' -Aufgabennummer 'abc' | Should -Be 'pke_v3_Java_Arrays_abc'
     }
 }
+
+Describe 'Resolve-PathOrAbsolute' {
+    It 'gibt für einen existierenden Pfad den aufgelösten Pfad zurück' {
+        $dir = New-Item -Path (Join-Path $TestDrive "vorhanden-$(New-Guid)") -ItemType Directory -Force
+        Resolve-PathOrAbsolute -PathValue $dir.FullName | Should -Be $dir.FullName
+    }
+
+    It 'löst Wildcards über das nächste existierende übergeordnete Verzeichnis auf' {
+        $base = Join-Path $TestDrive "wild-$(New-Guid)"
+        New-Item -Path (Join-Path $base 'Jahrgang-2026') -ItemType Directory -Force | Out-Null
+        $expected = Join-Path (Join-Path (Join-Path $base 'Jahrgang-2026') 'neu') 'datei.txt'
+
+        Resolve-PathOrAbsolute -PathValue (Join-Path $base 'Jahrgang-*/neu/datei.txt') | Should -Be $expected
+    }
+
+    It 'wirft einen Fehler, wenn für einen relativen Wildcard-Pfad kein übergeordnetes Verzeichnis existiert' {
+        Push-Location $TestDrive
+        try {
+            { Resolve-PathOrAbsolute -PathValue "gibt-es-nicht-$(New-Guid)-*/datei.txt" } | Should -Throw '*Wildcards*'
+        } finally {
+            Pop-Location
+        }
+    }
+
+    It 'macht einen nicht existierenden relativen Pfad relativ zum aktuellen Verzeichnis absolut' {
+        Push-Location $TestDrive
+        try {
+            Resolve-PathOrAbsolute -PathValue "neu-$(New-Guid)-x/datei.txt" | Should -BeLike (Join-Path $TestDrive '*-x*datei.txt')
+        } finally {
+            Pop-Location
+        }
+    }
+}
+
+Describe 'Invoke-OneDriveSync.ps1' {
+    It 'beendet sich mit Exit-Code 0 und einer Warnung, wenn OneDrive.exe fehlt' {
+        $script = Join-Path $PSScriptRoot '../scripts/Invoke-OneDriveSync.ps1'
+        $missing = Join-Path $TestDrive 'gibt-es-nicht/OneDrive.exe'
+
+        $output = & (Get-Process -Id $PID).Path -NoProfile -File $script -ExecutablePath $missing 3>&1 2>&1 | Out-String
+
+        $LASTEXITCODE | Should -Be 0
+        $output | Should -Match 'OneDrive\.exe wurde nicht gefunden'
+    }
+}
+
+Describe 'Invoke-DocFlowEngine (Ende-zu-Ende)' {
+    BeforeEach {
+        $script:e2eRoot = Join-Path $TestDrive "e2e-$(New-Guid)"
+        $script:e2eStudent = Join-Path $script:e2eRoot 'quelle/pke'
+        $script:e2eShared = Join-Path $script:e2eRoot 'shared'
+        $script:e2eAufgaben = Join-Path $script:e2eRoot 'aufgaben'
+        New-Item -Path $script:e2eStudent, $script:e2eShared -ItemType Directory -Force | Out-Null
+        Set-Content -Path (Join-Path $script:e2eShared 'project-routes.txt') -Value @('praefix=Java', 'suffix=Arrays')
+        foreach ($name in @('pke_Java_Arrays_1.pdf', 'pke_Ruby_Arrays_1.pdf', 'kaputt.pdf')) {
+            Set-Content -Path (Join-Path $script:e2eStudent $name) -Value 'x'
+        }
+
+        $script:e2eConfig = Join-Path $script:e2eRoot 'config.psd1'
+        @"
+@{
+    sources = @(@{ path = '$($script:e2eRoot)/quelle'; recursive = `$true; includePatterns = @('*.pdf'); excludePatterns = @() })
+    aufgabenRoot = '$($script:e2eAufgaben)'
+    namingConventions = @(
+        @{
+            match  = '^(?<initials>[A-Za-z]+)(?<versiontag>_v[0-9]+)?_(?<praefix>[A-Za-z]+)_(?<suffix>[A-Za-z0-9]+)_(?<aufgabennummer>[A-Za-z0-9]+)$'
+            rename = '{initials}{versiontag}_{praefix}_{suffix}_{aufgabennummer}'
+        }
+    )
+    projectRoutesFile = '$($script:e2eShared)/project-routes.txt'
+    projectRoutesSeedFile = '$($script:e2eShared)/project-routes.txt'
+    reviewMarker = @{ enabled = `$true; kuerzelRoutesFile = '$($script:e2eShared)/kuerzel-routes.txt' }
+    minFileAgeMinutes = 0
+    stateFile = '$($script:e2eShared)/state.json'
+    lockFile = '$($script:e2eShared)/.docflow-lock'
+    log = @{ level = 'Info'; file = '$($script:e2eShared)/docflow.log' }
+}
+"@ | Set-Content -Path $script:e2eConfig
+    }
+
+    AfterAll {
+        InModuleScope DocFlowEngine {
+            $Script:DryRun = $false
+            $Script:LogFilePath = $null
+            $Script:CurrentLogLevel = $null
+        }
+    }
+
+    It 'verändert im DryRun nichts außer dem Log' {
+        Invoke-DocFlowEngine -ConfigPath $script:e2eConfig -DryRun 6>$null
+
+        Test-Path $script:e2eAufgaben | Should -BeFalse
+        Test-Path (Join-Path $script:e2eShared 'state.json') | Should -BeFalse
+        Test-Path (Join-Path $script:e2eShared 'kuerzel-routes.txt') | Should -BeFalse
+        Test-Path (Join-Path $script:e2eShared '.docflow-lock') | Should -BeFalse
+        (Get-Content -Path (Join-Path $script:e2eShared 'docflow.log') -Raw) | Should -Match '\[DryRun\] Datei würde kopiert'
+        @(Get-ChildItem -Path $script:e2eStudent -Filter '*.txt').Count | Should -Be 0
+    }
+
+    It 'kopiert gültige Abgaben, schreibt Hinweise, Zustand, Kürzel-Registry und Log und gibt die Sperre frei' {
+        Invoke-DocFlowEngine -ConfigPath $script:e2eConfig 6>$null
+
+        Test-Path (Join-Path $script:e2eAufgaben 'Java/Arrays/pke_Java_Arrays_1.pdf') | Should -BeTrue
+        Test-Path (Join-Path $script:e2eAufgaben 'Ruby') | Should -BeFalse
+        Test-Path (Join-Path $script:e2eStudent 'pke_Ruby_Arrays_1.pdf.NAMENSKONVENTION-FEHLER.txt') | Should -BeTrue
+        Test-Path (Join-Path $script:e2eStudent 'kaputt.pdf.NAMENSKONVENTION-FEHLER.txt') | Should -BeTrue
+        Test-Path (Join-Path $script:e2eShared '.docflow-lock') | Should -BeFalse
+        (Get-Content -Path (Join-Path $script:e2eShared 'kuerzel-routes.txt')) | Should -Be "pke=$($script:e2eStudent)"
+        (Get-Content -Path (Join-Path $script:e2eShared 'docflow.log') -Raw) | Should -Match 'Verarbeitung abgeschlossen'
+
+        $state = Import-DocFlowState -StatePath (Join-Path $script:e2eShared 'state.json')
+        @($state.processed.Keys).Count | Should -Be 1
+    }
+
+    It 'meldet eine bereits verarbeitete Datei beim zweiten Lauf nur als übersprungen' {
+        Invoke-DocFlowEngine -ConfigPath $script:e2eConfig 6>$null
+        Invoke-DocFlowEngine -ConfigPath $script:e2eConfig 6>$null
+
+        (Get-Content -Path (Join-Path $script:e2eShared 'docflow.log') -Raw) | Should -Match 'Bereits in früheren Läufen verarbeitet und daher übersprungen: 1'
+        @(Get-ChildItem -Path (Join-Path $script:e2eAufgaben 'Java/Arrays')).Count | Should -Be 1
+    }
+
+    It 'überspringt den Lauf, solange eine frische Sperre einer anderen Instanz besteht' {
+        Set-Content -Path (Join-Path $script:e2eShared '.docflow-lock') -Value 'anderer-rechner|1|2026-01-01'
+
+        Invoke-DocFlowEngine -ConfigPath $script:e2eConfig 6>$null
+
+        Test-Path $script:e2eAufgaben | Should -BeFalse
+        Test-Path (Join-Path $script:e2eShared '.docflow-lock') | Should -BeTrue
+        Test-Path (Join-Path $script:e2eShared 'state.json') | Should -BeFalse
+    }
+}
