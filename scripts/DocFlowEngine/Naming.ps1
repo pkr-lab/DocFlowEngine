@@ -319,8 +319,7 @@ function Get-DocFlowRegistryLines {
 function ConvertTo-DocFlowRegistryStructure {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)] [AllowEmptyCollection()] $Lines,
-        [string]$SourceName = ''
+        [Parameter(Mandatory)] [AllowEmptyCollection()] $Lines
     )
 
     $structure = [ordered]@{
