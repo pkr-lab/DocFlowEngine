@@ -11,7 +11,7 @@
             path             = '{quelle}'
             recursive        = $true
             includePatterns  = @('*.pdf', '*.docx', '*.doc', '*.xlsx', '*.java', '*.zip', '*.py', '*.txt', '*.md', '*.csv', '*.pptx', '*.png', '*.jpg', '*.jpeg')
-            excludePatterns  = @('.*', 'Thumbs.db', 'desktop.ini', '~$*', '*.NAMENSKONVENTION-FEHLER.txt', '*.BEREITS-ABGEGEBEN.txt', '*.KUERZEL-UNBEKANNT.txt')
+            excludePatterns  = @('.*', 'Thumbs.db', 'desktop.ini', '~$*')
         }
     )
 
