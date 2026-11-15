@@ -1,13 +1,11 @@
+$Script:LogLevels = @{ TRACE = 0; DEBUG = 1; INFO = 2; WARNING = 3; ERROR = 4 }
+
 function Write-Log {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [ValidateSet('Trace','Debug','Info','Warning','Error')] [string]$Level,
         [Parameter(Mandatory)] [string]$Message
     )
-
-    if (-not $Script:LogLevels) {
-        $Script:LogLevels = @{ TRACE = 0; DEBUG = 1; INFO = 2; WARNING = 3; ERROR = 4 }
-    }
 
     if ($null -eq $Script:CurrentLogLevel) {
         $Script:CurrentLogLevel = $Script:LogLevels['INFO']
