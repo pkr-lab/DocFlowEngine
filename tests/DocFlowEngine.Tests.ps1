@@ -1316,3 +1316,97 @@ Describe 'Get-DocFlowNameProposal' {
         @($proposal.Notes) | Should -Be $Notes
     }
 }
+
+Describe 'Import-DocFlowConfig: Standardwerte' {
+    BeforeAll {
+        $script:writeConfig = {
+            param([string]$Extra)
+            $path = Join-Path $TestDrive "cfg-$(New-Guid).psd1"
+            @"
+@{
+    sources = @(@{ path = './quelle'; includePatterns = @('*.pdf') })
+    targets = @(@{ path = './ziel' })
+    namingConventions = @(@{ match = '^(?<name>.+)$'; rename = '{name}' })
+$Extra
+}
+"@ | Set-Content -Path $path
+            return $path
+        }
+    }
+
+    It 'ergänzt bei einer minimalen Konfiguration alle Standardwerte' {
+        $config = Import-DocFlowConfig -Path (& $script:writeConfig '')
+
+        $config.defaultNameFormat | Should -Be '{timestamp}_{originalName}'
+        $config.stateFile | Should -Be './.docflow-state.json'
+        $config.stateRetentionYears | Should -Be 3
+        $config.log.level | Should -Be 'Info'
+        $config.log.file | Should -Be './docflow.log'
+        $config.namingConventionHint.enabled | Should -BeTrue
+        $config.namingConventionHint.fileNameSuffix | Should -Be '.NAMENSKONVENTION-FEHLER.txt'
+        $config.namingConventionHint.message | Should -Match 'entspricht nicht dem vorgegebenen Namensschema'
+        $config.duplicateHint.enabled | Should -BeTrue
+        $config.duplicateHint.fileNameSuffix | Should -Be '.BEREITS-ABGEGEBEN.txt'
+        $config.duplicateHint.message | Should -Match '\{suggestedName\}'
+        $config.minFileAgeMinutes | Should -Be 2
+        $config.copyRetry.count | Should -Be 2
+        $config.copyRetry.delaySeconds | Should -Be 5
+        $config.reviewMarker.enabled | Should -BeFalse
+        $config.reviewMarker.pattern | Should -Be '_k-[A-Za-z0-9]+$'
+        $config.reviewMarker.korrigiertFolderName | Should -Be 'Korrigiert'
+        $config.reviewMarker.kuerzelRoutesFile | Should -Be './config/kuerzel-routes.txt'
+        $config.unknownKuerzelHint.enabled | Should -BeTrue
+        $config.unknownKuerzelHint.message | Should -Match '\{kuerzel\}'
+        $config.projectRoutesSeedFile | Should -Be './config/project-routes.txt'
+        $config.ContainsKey('lockFile') | Should -BeTrue
+        $config.lockFile | Should -BeNullOrEmpty
+        $config.lockTimeoutMinutes | Should -Be 15
+        $config.sources[0].excludePatterns | Should -Be @('*.NAMENSKONVENTION-FEHLER.txt', '*.BEREITS-ABGEGEBEN.txt', '*.KUERZEL-UNBEKANNT.txt')
+    }
+
+    It 'behält ausdrücklich gesetzte falsy-Werte, wo nur fehlende Schlüssel ergänzt werden' {
+        $extra = @'
+    minFileAgeMinutes = 0
+    copyRetry = @{ count = 0; delaySeconds = 0 }
+    namingConventionHint = @{ enabled = $false; fileNameSuffix = '.EIGEN.txt' }
+    duplicateHint = @{ enabled = $false }
+    unknownKuerzelHint = @{ enabled = $false }
+    reviewMarker = @{ enabled = $true; pattern = '_korr$' }
+    projectRoutesSeedFile = ''
+    log = @{ level = 'Debug' }
+'@
+        $config = Import-DocFlowConfig -Path (& $script:writeConfig $extra)
+
+        $config.minFileAgeMinutes | Should -Be 0
+        $config.copyRetry.count | Should -Be 0
+        $config.copyRetry.delaySeconds | Should -Be 0
+        $config.namingConventionHint.enabled | Should -BeFalse
+        $config.namingConventionHint.fileNameSuffix | Should -Be '.EIGEN.txt'
+        $config.duplicateHint.enabled | Should -BeFalse
+        $config.unknownKuerzelHint.enabled | Should -BeFalse
+        $config.reviewMarker.enabled | Should -BeTrue
+        $config.reviewMarker.pattern | Should -Be '_korr$'
+        $config.projectRoutesSeedFile | Should -Be ''
+        $config.log.level | Should -Be 'Debug'
+        $config.log.file | Should -BeNullOrEmpty
+        $config.sources[0].excludePatterns | Should -Contain '*.EIGEN.txt'
+    }
+
+    It 'ersetzt leere Werte, wo leere Angaben als fehlend gelten' {
+        $extra = @'
+    defaultNameFormat = ''
+    stateFile = ''
+    stateRetentionYears = 0
+    lockTimeoutMinutes = 0
+    namingConventionHint = @{ fileNameSuffix = ''; message = '' }
+'@
+        $config = Import-DocFlowConfig -Path (& $script:writeConfig $extra)
+
+        $config.defaultNameFormat | Should -Be '{timestamp}_{originalName}'
+        $config.stateFile | Should -Be './.docflow-state.json'
+        $config.stateRetentionYears | Should -Be 3
+        $config.lockTimeoutMinutes | Should -Be 15
+        $config.namingConventionHint.fileNameSuffix | Should -Be '.NAMENSKONVENTION-FEHLER.txt'
+        $config.namingConventionHint.message | Should -Not -BeNullOrEmpty
+    }
+}
