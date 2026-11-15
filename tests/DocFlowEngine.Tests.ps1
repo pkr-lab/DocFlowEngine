@@ -1466,3 +1466,101 @@ Describe 'New-DocFlowRunContext / Invoke-DocFlowCopyForward' {
         $context.KuerzelRoutes['pke'] | Should -Be $script:ctxStudent
     }
 }
+
+Describe 'Rename-Hilfsfunktionen' {
+    BeforeAll {
+        $script:renameHelperRules = @(
+            @{ match = '^(?<initials>[A-Za-z]+)(?<versiontag>_v[0-9]+)?_(?<praefix>[A-Za-z]+)_(?<suffix>[A-Za-z0-9]+)_(?<aufgabennummer>[A-Za-z0-9]+)$' }
+        )
+        $registryPath = Join-Path $TestDrive 'rename-helper-registry.txt'
+        Set-Content -Path $registryPath -Value @('praefix=Java', 'suffix=Arrays')
+        $script:renameHelperRegistry = Get-PraefixSuffixRegistry -Path $registryPath
+    }
+
+    Context 'ConvertTo-DocFlowKuerzelByFolder' {
+        It 'kehrt die Kürzel-Registry um und behält beim selben Ordner das erste Kürzel' {
+            $routes = [ordered]@{ pke = '/schueler/pke/'; ahf = '/schueler/ahf' }
+
+            $byFolder = ConvertTo-DocFlowKuerzelByFolder -KuerzelRoutes ([hashtable]$routes)
+
+            $byFolder['/schueler/pke'] | Should -Be 'pke'
+            $byFolder['/schueler/ahf'] | Should -Be 'ahf'
+        }
+    }
+
+    Context 'Get-DocFlowFolderInitials' {
+        BeforeEach {
+            $script:folderRoot = Join-Path $TestDrive "initialen-$(New-Guid)"
+        }
+
+        It 'nimmt die häufigsten Initialen regelkonformer Dateien im Ordner' {
+            $dir = New-Item -Path (Join-Path $script:folderRoot 'a') -ItemType Directory -Force
+            $files = foreach ($name in 'pke_Java_Arrays_1.pdf', 'pke_Java_Arrays_2.pdf', 'xyz_Java_Arrays_3.pdf', 'Java Arrays 4.pdf') { New-Item -Path (Join-Path $dir $name) -ItemType File -Force }
+
+            $result = Get-DocFlowFolderInitials -Files $files -Rules $script:renameHelperRules -Registry $script:renameHelperRegistry -KuerzelByFolder @{ $dir.FullName = 'abc' }
+
+            $result[$dir.FullName].Initials | Should -Be 'pke'
+            $result[$dir.FullName].Source | Should -Be 'aus regelkonformen Dateien im Ordner'
+        }
+
+        It 'nutzt die Kürzel-Registry, wenn keine Datei regelkonform ist' {
+            $dir = New-Item -Path (Join-Path $script:folderRoot 'b') -ItemType Directory -Force
+            $files = @(New-Item -Path (Join-Path $dir 'pke Java Arrays 4.pdf') -ItemType File -Force)
+
+            $result = Get-DocFlowFolderInitials -Files $files -Rules $script:renameHelperRules -Registry $script:renameHelperRegistry -KuerzelByFolder @{ $dir.FullName = 'abc' }
+
+            $result[$dir.FullName].Initials | Should -Be 'abc'
+            $result[$dir.FullName].Source | Should -Be 'aus der Kürzel-Registry'
+        }
+
+        It 'übernimmt eindeutig erratene Initialen aus anderen Dateinamen' {
+            $dir = New-Item -Path (Join-Path $script:folderRoot 'c') -ItemType Directory -Force
+            $files = foreach ($name in 'pke Java Arrays 4.pdf', 'pke Java Arrays 5.pdf', 'irgendwas.pdf') { New-Item -Path (Join-Path $dir $name) -ItemType File -Force }
+
+            $result = Get-DocFlowFolderInitials -Files $files -Rules $script:renameHelperRules -Registry $script:renameHelperRegistry
+
+            $result[$dir.FullName].Initials | Should -Be 'pke'
+            $result[$dir.FullName].Source | Should -Be 'aus anderen Dateinamen im Ordner'
+        }
+
+        It 'legt bei mehrdeutig erratenen Initialen nichts fest' {
+            $dir = New-Item -Path (Join-Path $script:folderRoot 'd') -ItemType Directory -Force
+            $files = foreach ($name in 'pke Java Arrays 4.pdf', 'ahf Java Arrays 5.pdf') { New-Item -Path (Join-Path $dir $name) -ItemType File -Force }
+
+            $result = Get-DocFlowFolderInitials -Files $files -Rules $script:renameHelperRules -Registry $script:renameHelperRegistry
+
+            $result.ContainsKey($dir.FullName) | Should -BeFalse
+        }
+    }
+
+    Context 'Undo-DocFlowRename' {
+        BeforeEach {
+            $script:undoDir = New-Item -Path (Join-Path $TestDrive "undo-$(New-Guid)") -ItemType Directory -Force
+            $script:undoReport = Join-Path $script:undoDir 'report.csv'
+        }
+
+        It 'benennt ausgeführte Zeilen zurück und überspringt fehlende Dateien sowie belegte alte Namen' {
+            Set-Content -LiteralPath (Join-Path $script:undoDir 'neu1.pdf') -Value 'x'
+            Set-Content -LiteralPath (Join-Path $script:undoDir 'neu3.pdf') -Value 'x'
+            Set-Content -LiteralPath (Join-Path $script:undoDir 'alt3.pdf') -Value 'x'
+            @(
+                [PSCustomObject]@{ AlterPfad = (Join-Path $script:undoDir 'alt1.pdf'); NeuerPfad = (Join-Path $script:undoDir 'neu1.pdf'); Ausgefuehrt = 'ja' }
+                [PSCustomObject]@{ AlterPfad = (Join-Path $script:undoDir 'alt2.pdf'); NeuerPfad = (Join-Path $script:undoDir 'neu2.pdf'); Ausgefuehrt = 'ja' }
+                [PSCustomObject]@{ AlterPfad = (Join-Path $script:undoDir 'alt3.pdf'); NeuerPfad = (Join-Path $script:undoDir 'neu3.pdf'); Ausgefuehrt = 'ja' }
+                [PSCustomObject]@{ AlterPfad = (Join-Path $script:undoDir 'alt4.pdf'); NeuerPfad = (Join-Path $script:undoDir 'neu4.pdf'); Ausgefuehrt = 'nein' }
+            ) | Export-Csv -LiteralPath $script:undoReport -Delimiter ';' -NoTypeInformation
+
+            $result = Undo-DocFlowRename -ReportPath $script:undoReport -WarningVariable warnings -WarningAction SilentlyContinue
+
+            $result.Restored | Should -Be 1
+            $result.Total | Should -Be 3
+            Test-Path -LiteralPath (Join-Path $script:undoDir 'alt1.pdf') | Should -BeTrue
+            Test-Path -LiteralPath (Join-Path $script:undoDir 'neu3.pdf') | Should -BeTrue
+            @($warnings).Count | Should -Be 2
+        }
+
+        It 'wirft einen Fehler, wenn die Undo-Datei fehlt' {
+            { Undo-DocFlowRename -ReportPath (Join-Path $script:undoDir 'fehlt.csv') } | Should -Throw '*nicht gefunden*'
+        }
+    }
+}
