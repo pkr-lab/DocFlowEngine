@@ -168,6 +168,23 @@ function Get-DocFlowWhitelistRejectionReason {
     return "$($unknownParts -join ' und ') nicht"
 }
 
+function Write-DocFlowResubmissionHint {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [System.IO.FileInfo]$File,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [array]$Rules,
+        [hashtable]$DuplicateHint,
+        [string]$TargetDirectory
+    )
+
+    if (-not ($DuplicateHint -and $DuplicateHint.enabled)) {
+        return
+    }
+
+    $suggestedName = Get-DocFlowSuggestedVersionName -File $File -Rules $Rules -TargetDirectory $TargetDirectory
+    Write-DocFlowDuplicateHint -File $File -HintConfig $DuplicateHint -SuggestedName $suggestedName
+}
+
 function Copy-NewFiles {
     [CmdletBinding()]
     param(
@@ -256,11 +273,8 @@ function Copy-NewFiles {
                     }
 
                     Write-Log -Level Warning -Message "Datei '$($item.Name)' wurde nach der Abgabe unter gleichem Namen überschrieben. Sie wird nicht erneut kopiert; der Schüler soll eine Versionsangabe (_v2_ usw.) verwenden."
-                    if ($DuplicateHint -and $DuplicateHint.enabled) {
-                        $suggestionDirectory = if ($praefixSuffix) { Join-Path (Join-Path $AufgabenRoot $praefixSuffix.Praefix) $praefixSuffix.Suffix } else { $null }
-                        $suggestedName = Get-DocFlowSuggestedVersionName -File $item -Rules $Rules -TargetDirectory $suggestionDirectory
-                        Write-DocFlowDuplicateHint -File $item -HintConfig $DuplicateHint -SuggestedName $suggestedName
-                    }
+                    $suggestionDirectory = if ($praefixSuffix) { Join-Path (Join-Path $AufgabenRoot $praefixSuffix.Praefix) $praefixSuffix.Suffix } else { $null }
+                    Write-DocFlowResubmissionHint -File $item -Rules $Rules -DuplicateHint $DuplicateHint -TargetDirectory $suggestionDirectory
                     continue
                 }
 
@@ -341,10 +355,7 @@ function Copy-NewFiles {
                         }
 
                         Write-Log -Level Warning -Message "Datei '$($item.Name)' wurde bereits abgegeben ('$($existingSubmission.Name)'). Sie wird nicht erneut kopiert; der Schüler soll eine Versionsangabe (_v2_ usw.) verwenden."
-                        if ($DuplicateHint -and $DuplicateHint.enabled) {
-                            $suggestedName = Get-DocFlowSuggestedVersionName -File $item -Rules $Rules -TargetDirectory $effectiveTargets[0].path
-                            Write-DocFlowDuplicateHint -File $item -HintConfig $DuplicateHint -SuggestedName $suggestedName
-                        }
+                        Write-DocFlowResubmissionHint -File $item -Rules $Rules -DuplicateHint $DuplicateHint -TargetDirectory $effectiveTargets[0].path
                         continue
                     }
                 }
