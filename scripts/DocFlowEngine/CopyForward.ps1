@@ -118,6 +118,30 @@ function Test-DocFlowHintFileName {
     return $false
 }
 
+function Complete-DocFlowProcessedFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [hashtable]$State,
+        [Parameter(Mandatory)] [string]$SourceKey,
+        [Parameter(Mandatory)] [System.IO.FileInfo]$File,
+        [AllowEmptyCollection()] [array]$TargetPaths = @(),
+        [AllowEmptyCollection()] [array]$HintSuffixes = @()
+    )
+
+    $fingerprint = Get-DocFlowFileFingerprint -File $File
+    $State.processed[$SourceKey] = [ordered]@{
+        source = $File.FullName
+        targets = $TargetPaths
+        processedAt = (Get-Date).ToString('o')
+        length = $fingerprint.Length
+        lastWriteUtcSeconds = $fingerprint.LastWriteUtcSeconds
+    }
+
+    foreach ($suffix in $HintSuffixes) {
+        Remove-DocFlowHintFile -Path "$($File.FullName)$suffix" -Reason 'Datei wurde verarbeitet'
+    }
+}
+
 function Copy-NewFiles {
     [CmdletBinding()]
     param(
@@ -301,17 +325,7 @@ function Copy-NewFiles {
                     if ($existingSubmission) {
                         if ($existingSubmission.Length -eq $item.Length) {
                             Write-Log -Level Info -Message "Datei '$($item.Name)' liegt bereits identisch in '$($existingSubmission.FullName)'. Wird als verarbeitet übernommen."
-                            $fingerprint = Get-DocFlowFileFingerprint -File $item
-                            $State.processed[$sourceKey] = [ordered]@{
-                                source = $item.FullName
-                                targets = @($existingSubmission.FullName)
-                                processedAt = (Get-Date).ToString('o')
-                                length = $fingerprint.Length
-                                lastWriteUtcSeconds = $fingerprint.LastWriteUtcSeconds
-                            }
-                            foreach ($suffix in $hintSuffixes) {
-                                Remove-DocFlowHintFile -Path "$($item.FullName)$suffix" -Reason 'Datei wurde verarbeitet'
-                            }
+                            Complete-DocFlowProcessedFile -State $State -SourceKey $sourceKey -File $item -TargetPaths @($existingSubmission.FullName) -HintSuffixes $hintSuffixes
                             continue
                         }
 
@@ -372,18 +386,7 @@ function Copy-NewFiles {
                     continue
                 }
 
-                $fingerprint = Get-DocFlowFileFingerprint -File $item
-                $State.processed[$sourceKey] = [ordered]@{
-                    source = $item.FullName
-                    targets = $targetPaths
-                    processedAt = (Get-Date).ToString('o')
-                    length = $fingerprint.Length
-                    lastWriteUtcSeconds = $fingerprint.LastWriteUtcSeconds
-                }
-
-                foreach ($suffix in $hintSuffixes) {
-                    Remove-DocFlowHintFile -Path "$($item.FullName)$suffix" -Reason 'Datei wurde verarbeitet'
-                }
+                Complete-DocFlowProcessedFile -State $State -SourceKey $sourceKey -File $item -TargetPaths $targetPaths -HintSuffixes $hintSuffixes
             }
 
             if ($alreadyProcessedCount -gt 0) {
