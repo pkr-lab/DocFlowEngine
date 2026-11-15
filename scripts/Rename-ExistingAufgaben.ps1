@@ -69,7 +69,7 @@ if ($Undo) {
     return
 }
 
-$config = Load-Config -Path $ConfigPath
+$config = Import-DocFlowConfig -Path $ConfigPath
 
 $registry = $null
 if ($config.projectRoutesFile) {
@@ -105,7 +105,7 @@ if (-not $lockAcquired) {
 
 try {
     $statePath = Resolve-PathOrAbsolute -PathValue $config.stateFile
-    $state = Load-State -StatePath $statePath
+    $state = Import-DocFlowState -StatePath $statePath
 
     $scanRoots = @()
     if ($Path.Count -gt 0) {
