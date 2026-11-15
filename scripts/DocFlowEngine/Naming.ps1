@@ -564,6 +564,131 @@ function ConvertTo-DocFlowAsciiName {
     return $result
 }
 
+function Get-DocFlowNameTokens {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Name
+    )
+
+    $cleaned = ConvertTo-DocFlowAsciiName -Text $Name
+    $cleaned = $cleaned -replace '\s*\(\d+\)\s*$', ''
+    $cleaned = $cleaned -replace '(?i)\s*-\s*(kopie|copy)(\s*\(\d+\))?\s*$', ''
+    $cleaned = $cleaned -replace '(?i)^(kopie|copy)\s+(von|of)\s+', ''
+
+    return ,@($cleaned -split '[^A-Za-z0-9]+' | Where-Object { $_ })
+}
+
+function Find-DocFlowTokenIndex {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Tokens,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [System.Collections.Generic.HashSet[int]]$Used,
+        [Parameter(Mandatory)] [string]$Value
+    )
+
+    for ($index = 0; $index -lt $Tokens.Count; $index++) {
+        if (-not $Used.Contains($index) -and $Tokens[$index] -eq $Value) {
+            return $index
+        }
+    }
+
+    return -1
+}
+
+function Find-DocFlowRegistryPairInTokens {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Tokens,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [System.Collections.Generic.HashSet[int]]$Used,
+        [Parameter(Mandatory)] $Registry
+    )
+
+    $hasToken = { param([string]$Value) (Find-DocFlowTokenIndex -Tokens $Tokens -Used $Used -Value $Value) -ge 0 }
+    $result = [PSCustomObject]@{ Praefix = $null; Suffix = $null; Notes = New-Object System.Collections.Generic.List[string] }
+
+    $pairs = @(foreach ($p in $Registry.Paare.Keys) { foreach ($s in $Registry.Paare[$p]) { [PSCustomObject]@{ Praefix = $p; Suffix = $s } } })
+
+    $strong = @($pairs | Where-Object { (& $hasToken $_.Praefix) -and (& $hasToken $_.Suffix) })
+    if ($strong.Count -gt 1) {
+        $longest = ($strong | ForEach-Object { $_.Suffix.Length } | Measure-Object -Maximum).Maximum
+        $strong = @($strong | Where-Object { $_.Suffix.Length -eq $longest })
+    }
+
+    if ($strong.Count -eq 1) {
+        $result.Praefix = $strong[0].Praefix
+        $result.Suffix = $strong[0].Suffix
+        return $result
+    }
+
+    if ($strong.Count -gt 1) {
+        $result.Notes.Add('Präfix/Suffix mehrdeutig')
+        return $result
+    }
+
+    $compact = ($Tokens -join '').ToLowerInvariant()
+    $bySubstring = @($pairs | Where-Object { $compact.Contains($_.Praefix.ToLowerInvariant()) -and $compact.Contains($_.Suffix.ToLowerInvariant()) })
+    if ($bySubstring.Count -gt 1) {
+        $longest = ($bySubstring | ForEach-Object { $_.Praefix.Length + $_.Suffix.Length } | Measure-Object -Maximum).Maximum
+        $bySubstring = @($bySubstring | Where-Object { ($_.Praefix.Length + $_.Suffix.Length) -eq $longest })
+    }
+
+    $bySuffix = @($pairs | Where-Object { & $hasToken $_.Suffix })
+    $byPraefix = @($Registry.Paare.Keys | Where-Object { & $hasToken $_ })
+
+    if ($bySubstring.Count -eq 1) {
+        $result.Praefix = $bySubstring[0].Praefix
+        $result.Suffix = $bySubstring[0].Suffix
+        $result.Notes.Add('Präfix/Suffix aus zusammengeschriebenem Namen erkannt')
+    } elseif ($bySuffix.Count -eq 1) {
+        $result.Praefix = $bySuffix[0].Praefix
+        $result.Suffix = $bySuffix[0].Suffix
+        $result.Notes.Add("Präfix aus Suffix '$($result.Suffix)' abgeleitet")
+    } elseif ($byPraefix.Count -eq 1) {
+        $result.Praefix = $byPraefix[0]
+        $result.Notes.Add('Suffix nicht erkannt')
+    } elseif ($bySuffix.Count -gt 1 -and @($bySuffix | Select-Object -ExpandProperty Suffix -Unique).Count -eq 1) {
+        $result.Suffix = $bySuffix[0].Suffix
+        $result.Notes.Add("Suffix '$($result.Suffix)' passt zu mehreren Präfixen ($(@($bySuffix | Select-Object -ExpandProperty Praefix) -join ', '))")
+    } else {
+        $result.Notes.Add('Präfix/Suffix nicht erkannt')
+    }
+
+    return $result
+}
+
+function Find-DocFlowPraefixSuffixInTokens {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Tokens,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [System.Collections.Generic.HashSet[int]]$Used,
+        $Registry
+    )
+
+    if ($Registry -and $Registry.Contains('Paare') -and $Registry.Paare -and $Registry.Paare.Count -gt 0) {
+        return Find-DocFlowRegistryPairInTokens -Tokens $Tokens -Used $Used -Registry $Registry
+    }
+
+    $result = [PSCustomObject]@{ Praefix = $null; Suffix = $null; Notes = New-Object System.Collections.Generic.List[string] }
+    if (-not $Registry) {
+        return $result
+    }
+
+    if ($Registry.Praefixe) {
+        $praefixMatches = @($Registry.Praefixe | Where-Object { (Find-DocFlowTokenIndex -Tokens $Tokens -Used $Used -Value $_) -ge 0 })
+        if ($praefixMatches.Count -eq 1) {
+            $result.Praefix = $praefixMatches[0]
+        }
+    }
+    if ($Registry.Suffixe) {
+        $suffixMatches = @($Registry.Suffixe | Where-Object { ($_ -ne $result.Praefix) -and ((Find-DocFlowTokenIndex -Tokens $Tokens -Used $Used -Value $_) -ge 0) })
+        if ($suffixMatches.Count -eq 1) {
+            $result.Suffix = $suffixMatches[0]
+        }
+    }
+
+    return $result
+}
+
 function Get-DocFlowNameProposal {
     [CmdletBinding()]
     param(
@@ -574,19 +699,12 @@ function Get-DocFlowNameProposal {
         [string]$Placeholder = 'PLATZHALTER'
     )
 
-    $notes = New-Object System.Collections.Generic.List[string]
-
     $existingParts = Get-DocFlowSubmissionParts -Name $Name -Rules $Rules
     if ($existingParts) {
         return [PSCustomObject]@{ Stem = $Name; Compliant = $true; Initials = $existingParts.Initials; Version = $existingParts.Version; Praefix = $existingParts.Praefix; Suffix = $existingParts.Suffix; Aufgabennummer = $existingParts.Aufgabennummer; HasPlaceholder = $false; Notes = @() }
     }
 
-    $cleaned = ConvertTo-DocFlowAsciiName -Text $Name
-    $cleaned = $cleaned -replace '\s*\(\d+\)\s*$', ''
-    $cleaned = $cleaned -replace '(?i)\s*-\s*(kopie|copy)(\s*\(\d+\))?\s*$', ''
-    $cleaned = $cleaned -replace '(?i)^(kopie|copy)\s+(von|of)\s+', ''
-
-    $tokens = @($cleaned -split '[^A-Za-z0-9]+' | Where-Object { $_ })
+    $tokens = Get-DocFlowNameTokens -Name $Name
     $used = New-Object 'System.Collections.Generic.HashSet[int]'
 
     $version = 0
@@ -597,78 +715,10 @@ function Get-DocFlowNameProposal {
         }
     }
 
-    $findToken = {
-        param([string]$Value)
-        for ($i = 0; $i -lt $tokens.Count; $i++) {
-            if (-not $used.Contains($i) -and $tokens[$i] -eq $Value) {
-                return $i
-            }
-        }
-        return -1
-    }
-
-    $praefix = $null
-    $suffix = $null
-    $hasPairs = $Registry -and $Registry.Contains('Paare') -and $Registry.Paare -and $Registry.Paare.Count -gt 0
-
-    if ($hasPairs) {
-        $pairs = foreach ($p in $Registry.Paare.Keys) { foreach ($s in $Registry.Paare[$p]) { [PSCustomObject]@{ Praefix = $p; Suffix = $s } } }
-        $pairs = @($pairs)
-
-        $strong = @($pairs | Where-Object { ((& $findToken $_.Praefix) -ge 0) -and ((& $findToken $_.Suffix) -ge 0) })
-        if ($strong.Count -gt 1) {
-            $longest = ($strong | ForEach-Object { $_.Suffix.Length } | Measure-Object -Maximum).Maximum
-            $strong = @($strong | Where-Object { $_.Suffix.Length -eq $longest })
-        }
-
-        if ($strong.Count -eq 1) {
-            $praefix = $strong[0].Praefix
-            $suffix = $strong[0].Suffix
-        } elseif ($strong.Count -gt 1) {
-            $notes.Add('Präfix/Suffix mehrdeutig')
-        } else {
-            $compact = ($tokens -join '').ToLowerInvariant()
-            $bySubstring = @($pairs | Where-Object { $compact.Contains($_.Praefix.ToLowerInvariant()) -and $compact.Contains($_.Suffix.ToLowerInvariant()) })
-            if ($bySubstring.Count -gt 1) {
-                $longest = ($bySubstring | ForEach-Object { $_.Praefix.Length + $_.Suffix.Length } | Measure-Object -Maximum).Maximum
-                $bySubstring = @($bySubstring | Where-Object { ($_.Praefix.Length + $_.Suffix.Length) -eq $longest })
-            }
-
-            $bySuffix = @($pairs | Where-Object { (& $findToken $_.Suffix) -ge 0 })
-            $byPraefix = @($Registry.Paare.Keys | Where-Object { (& $findToken $_) -ge 0 })
-
-            if ($bySubstring.Count -eq 1) {
-                $praefix = $bySubstring[0].Praefix
-                $suffix = $bySubstring[0].Suffix
-                $notes.Add('Präfix/Suffix aus zusammengeschriebenem Namen erkannt')
-            } elseif ($bySuffix.Count -eq 1) {
-                $praefix = $bySuffix[0].Praefix
-                $suffix = $bySuffix[0].Suffix
-                $notes.Add("Präfix aus Suffix '$suffix' abgeleitet")
-            } elseif ($byPraefix.Count -eq 1) {
-                $praefix = $byPraefix[0]
-                $notes.Add('Suffix nicht erkannt')
-            } elseif ($bySuffix.Count -gt 1 -and @($bySuffix | Select-Object -ExpandProperty Suffix -Unique).Count -eq 1) {
-                $suffix = $bySuffix[0].Suffix
-                $notes.Add("Suffix '$suffix' passt zu mehreren Präfixen ($(@($bySuffix | Select-Object -ExpandProperty Praefix) -join ', '))")
-            } else {
-                $notes.Add('Präfix/Suffix nicht erkannt')
-            }
-        }
-    } elseif ($Registry) {
-        if ($Registry.Praefixe) {
-            $praefixMatches = @($Registry.Praefixe | Where-Object { (& $findToken $_) -ge 0 })
-            if ($praefixMatches.Count -eq 1) {
-                $praefix = $praefixMatches[0]
-            }
-        }
-        if ($Registry.Suffixe) {
-            $suffixMatches = @($Registry.Suffixe | Where-Object { ($_ -ne $praefix) -and ((& $findToken $_) -ge 0) })
-            if ($suffixMatches.Count -eq 1) {
-                $suffix = $suffixMatches[0]
-            }
-        }
-    }
+    $match = Find-DocFlowPraefixSuffixInTokens -Tokens $tokens -Used $used -Registry $Registry
+    $praefix = $match.Praefix
+    $suffix = $match.Suffix
+    $notes = $match.Notes
 
     for ($i = 0; $i -lt $tokens.Count; $i++) {
         if ($used.Contains($i)) {
@@ -684,7 +734,7 @@ function Get-DocFlowNameProposal {
     $initials = $null
     if ($KnownInitials) {
         $initials = $KnownInitials
-        $knownIndex = & $findToken $KnownInitials
+        $knownIndex = Find-DocFlowTokenIndex -Tokens $tokens -Used $used -Value $KnownInitials
         if ($knownIndex -ge 0) {
             [void]$used.Add($knownIndex)
         }
