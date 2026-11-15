@@ -1,6 +1,6 @@
 # Laufzeitdaten von DocFlowEngine. Im Multi-Machine-Betrieb liegen diese laut
 # config/docflow-config.psd1 im geteilten OneDrive/SharePoint-Ordner, nicht in
-# diesem Repo (siehe MULTI-MACHINE-SETUP.md). Fallback-Namen (relative Pfade)
+# diesem Repo. Fallback-Namen (relative Pfade)
 # hier trotzdem ausgeschlossen, falls lokal/testweise mit relativen Pfaden
 # gearbeitet wird.
 .docflow-state.json
@@ -10,6 +10,7 @@ docflow.log
 
 # Von DocFlowEngine automatisch erzeugte Pro-Datei-Hinweise
 *.NAMENSKONVENTION-FEHLER.txt
+*.BEREITS-ABGEGEBEN.txt
 *.KUERZEL-UNBEKANNT.txt
 
 # PowerShell / Pester
