@@ -1,4 +1,8 @@
 $Script:LogLevels = @{ TRACE = 0; DEBUG = 1; INFO = 2; WARNING = 3; ERROR = 4 }
+$Script:DatePrefixPattern = '^\d{8}(?:\d{6})?_'
+$Script:DefaultReviewMarkerPattern = '_k-[A-Za-z0-9]+$'
+$Script:DefaultKorrigiertFolderName = 'Korrigiert'
+$Script:UnknownKuerzelHintSuffix = '.KUERZEL-UNBEKANNT.txt'
 
 function Write-Log {
     [CmdletBinding()]
