@@ -118,10 +118,11 @@ function Copy-ReviewedFiles {
 
         $originalStem = $nameWithoutExtension.Substring(0, $markerMatch.Index) -replace $Script:DatePrefixPattern, ''
         $kuerzel = Get-FileInitialsFromName -Name $originalStem -Rules $Rules
+        $kuerzelKey = if ($kuerzel) { $kuerzel.ToLowerInvariant() } else { $null }
         $hintPath = Join-Path $item.DirectoryName "$($item.Name)$unknownKuerzelSuffix"
 
-        if ($kuerzel -and $KuerzelRoutes.ContainsKey($kuerzel.ToLowerInvariant())) {
-            $studentFolder = $KuerzelRoutes[$kuerzel.ToLowerInvariant()]
+        if ($kuerzelKey -and $KuerzelRoutes.ContainsKey($kuerzelKey)) {
+            $studentFolder = $KuerzelRoutes[$kuerzelKey]
             $korrigiertFolder = Join-Path $studentFolder $korrigiertFolderName
 
             if (-not (Test-Path $korrigiertFolder)) {
@@ -151,7 +152,7 @@ function Copy-ReviewedFiles {
             $State.reviewedFiles[$reviewKey] = [ordered]@{
                 source = $item.FullName
                 target = $destinationPath
-                kuerzel = $kuerzel.ToLowerInvariant()
+                kuerzel = $kuerzelKey
                 processedAt = (Get-Date).ToString('o')
             }
 
