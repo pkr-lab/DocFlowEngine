@@ -157,7 +157,7 @@ function ConvertTo-DocFlowHashtable {
         }
 
         if ($InputObject -is [System.Collections.IEnumerable] -and $InputObject -isnot [string]) {
-            return @($InputObject | ForEach-Object { ConvertTo-DocFlowHashtable -InputObject $_ })
+            return ,@($InputObject | ForEach-Object { ConvertTo-DocFlowHashtable -InputObject $_ })
         }
 
         return $InputObject
