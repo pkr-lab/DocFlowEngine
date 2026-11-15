@@ -85,12 +85,12 @@ function Copy-ReviewedFiles {
         return
     }
 
-    $unknownKuerzelSuffix = '.KUERZEL-UNBEKANNT.txt'
+    $unknownKuerzelSuffix = $Script:UnknownKuerzelHintSuffix
     Remove-DocFlowOrphanedHintFiles -Directory $AufgabenRoot -HintSuffixes @($unknownKuerzelSuffix)
 
     $korrigiertFolderName = $ReviewMarker.korrigiertFolderName
     if (-not $korrigiertFolderName) {
-        $korrigiertFolderName = 'Korrigiert'
+        $korrigiertFolderName = $Script:DefaultKorrigiertFolderName
     }
 
     $pattern = [regex]::new($ReviewMarker.pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
@@ -116,7 +116,7 @@ function Copy-ReviewedFiles {
             continue
         }
 
-        $originalStem = $nameWithoutExtension.Substring(0, $markerMatch.Index) -replace '^\d{8}(?:\d{6})?_', ''
+        $originalStem = $nameWithoutExtension.Substring(0, $markerMatch.Index) -replace $Script:DatePrefixPattern, ''
         $kuerzel = Get-FileInitialsFromName -Name $originalStem -Rules $Rules
         $hintPath = Join-Path $item.DirectoryName "$($item.Name)$unknownKuerzelSuffix"
 
