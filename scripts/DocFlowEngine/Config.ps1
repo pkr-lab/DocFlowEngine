@@ -100,7 +100,7 @@ function Expand-DocFlowConfigPaths {
     }
 }
 
-function Load-Config {
+function Import-DocFlowConfig {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [string]$Path
