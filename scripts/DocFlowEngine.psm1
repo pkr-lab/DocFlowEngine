@@ -62,51 +62,13 @@ function Invoke-DocFlowEngine {
             Initialize-DocFlowTargetDirectories -Targets $config.targets
         }
 
-        $statePath = Resolve-PathOrAbsolute -PathValue $config.stateFile
-        $state = Import-DocFlowState -StatePath $statePath
+        $context = New-DocFlowRunContext -Config $config
+        $state = $context.State
 
-        $categoryRoutes = if ($config.categoryRoutes) { $config.categoryRoutes } else { @() }
+        Invoke-DocFlowCopyForward -Config $config -Context $context
 
-        $aufgabenRoot = $null
-        if ($config.aufgabenRoot) {
-            $aufgabenRoot = Resolve-PathOrAbsolute -PathValue $config.aufgabenRoot
-        }
-
-        $registryFilePath = $null
-        $praefixSuffixRegistry = [ordered]@{
-            Praefixe = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-            Suffixe = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        }
-        if ($config.projectRoutesFile) {
-            $registryFilePath = Resolve-PathOrAbsolute -PathValue $config.projectRoutesFile
-
-            if ($config.projectRoutesSeedFile) {
-                $seedFilePath = Resolve-PathOrAbsolute -PathValue $config.projectRoutesSeedFile
-                Sync-ProjectRoutesFromSeed -SeedPath $seedFilePath -TargetPath $registryFilePath
-            }
-
-            $praefixSuffixRegistry = Get-PraefixSuffixRegistry -Path $registryFilePath
-        }
-
-        $kuerzelRoutesFilePath = $null
-        $kuerzelRoutes = @{}
-        if ($config.reviewMarker.kuerzelRoutesFile) {
-            $kuerzelRoutesFilePath = Resolve-PathOrAbsolute -PathValue $config.reviewMarker.kuerzelRoutesFile
-            $kuerzelRoutes = Get-KuerzelRoutes -Path $kuerzelRoutesFilePath
-        }
-
-        $excludePaths = @()
-        foreach ($target in $config.targets) {
-            $excludePaths += $target.path
-        }
-        if ($aufgabenRoot) {
-            $excludePaths += $aufgabenRoot
-        }
-
-        Copy-NewFiles -Sources $config.sources -Targets $config.targets -State $state -Rules $config.namingConventions -DefaultNameFormat $config.defaultNameFormat -CategoryRoutes $categoryRoutes -AufgabenRoot $aufgabenRoot -PraefixSuffixRegistry $praefixSuffixRegistry -RegistryFilePath $registryFilePath -ExcludePaths $excludePaths -NamingConventionHint $config.namingConventionHint -DuplicateHint $config.duplicateHint -MinFileAgeMinutes $config.minFileAgeMinutes -RetryCount $config.copyRetry.count -RetryDelaySeconds $config.copyRetry.delaySeconds -KuerzelRoutes $kuerzelRoutes -KuerzelRoutesFilePath $kuerzelRoutesFilePath -KorrigiertFolderName $config.reviewMarker.korrigiertFolderName -ReviewMarkerPattern $config.reviewMarker.pattern
-
-        if ($aufgabenRoot -and $config.reviewMarker.enabled) {
-            Copy-ReviewedFiles -AufgabenRoot $aufgabenRoot -ReviewMarker $config.reviewMarker -KuerzelRoutes $kuerzelRoutes -State $state -Rules $config.namingConventions -UnknownKuerzelHint $config.unknownKuerzelHint -RetryCount $config.copyRetry.count -RetryDelaySeconds $config.copyRetry.delaySeconds
+        if ($context.AufgabenRoot -and $config.reviewMarker.enabled) {
+            Copy-ReviewedFiles -AufgabenRoot $context.AufgabenRoot -ReviewMarker $config.reviewMarker -KuerzelRoutes $context.KuerzelRoutes -State $state -Rules $config.namingConventions -UnknownKuerzelHint $config.unknownKuerzelHint -RetryCount $config.copyRetry.count -RetryDelaySeconds $config.copyRetry.delaySeconds
         }
 
         if ($config.stateRetentionYears -gt 0) {
@@ -121,7 +83,7 @@ function Invoke-DocFlowEngine {
         }
 
         if (-not $DryRun) {
-            Save-State -StatePath $statePath -State $state
+            Save-State -StatePath $context.StatePath -State $state
         }
 
         Write-Log -Level Info -Message "Verarbeitung abgeschlossen."
@@ -136,4 +98,4 @@ Set-Alias -Name Load-Config -Value Import-DocFlowConfig
 Set-Alias -Name Load-State -Value Import-DocFlowState
 Set-Alias -Name Ensure-TargetDirectories -Value Initialize-DocFlowTargetDirectories
 
-Export-ModuleMember -Alias Load-Config, Load-State, Ensure-TargetDirectories -Function Invoke-DocFlowEngine, Copy-DocFlowFileWithRetry, Test-DocFlowFileReady, Write-DocFlowHintFile, Remove-DocFlowHintFile, Remove-DocFlowOrphanedHintFiles, Get-DocFlowFileFingerprint, Test-DocFlowSameFileVersion, Get-DocFlowSubmissionParts, Find-DocFlowExistingSubmission, Get-DocFlowSuggestedVersionName, New-DocFlowSubmissionStem, Write-DocFlowDuplicateHint, Get-DocFlowNameProposal, ConvertTo-DocFlowAsciiName, Resolve-DocFlowPathVariables, Expand-DocFlowPathValue, Expand-DocFlowConfigPaths, Get-TargetFileName, Import-DocFlowConfig, Import-DocFlowState, Save-State, Remove-DocFlowExpiredState, Get-SourceFiles, Initialize-DocFlowTargetDirectories, Resolve-PathOrAbsolute, Resolve-SourcePaths, Test-PathExcluded, Expand-Template, Write-Log, Copy-NewFiles, Get-FileCategory, Resolve-CategoryTarget, Get-FilePraefixSuffix, Get-FileInitials, Get-FileInitialsFromName, Get-PraefixSuffixRegistry, Sync-ProjectRoutesFromSeed, Get-DocFlowMigratedFileName, Test-DocFlowPraefixSuffixKnown, ConvertTo-DocFlowHashtable, Get-DocFlowRelativePath, Write-NamingConventionHint, Get-KuerzelRoutes, Register-Kuerzel, Copy-ReviewedFiles, Lock-DocFlowRun, Unlock-DocFlowRun, Test-DocFlowLockFresh, Test-DocFlowInsideNamedFolder
+Export-ModuleMember -Alias Load-Config, Load-State, Ensure-TargetDirectories -Function Invoke-DocFlowEngine, Invoke-DocFlowCopyForward, New-DocFlowRunContext, Copy-DocFlowFileWithRetry, Test-DocFlowFileReady, Write-DocFlowHintFile, Remove-DocFlowHintFile, Remove-DocFlowOrphanedHintFiles, Get-DocFlowFileFingerprint, Test-DocFlowSameFileVersion, Get-DocFlowSubmissionParts, Find-DocFlowExistingSubmission, Get-DocFlowSuggestedVersionName, New-DocFlowSubmissionStem, Write-DocFlowDuplicateHint, Get-DocFlowNameProposal, ConvertTo-DocFlowAsciiName, Resolve-DocFlowPathVariables, Expand-DocFlowPathValue, Expand-DocFlowConfigPaths, Get-TargetFileName, Import-DocFlowConfig, Import-DocFlowState, Save-State, Remove-DocFlowExpiredState, Get-SourceFiles, Initialize-DocFlowTargetDirectories, Resolve-PathOrAbsolute, Resolve-SourcePaths, Test-PathExcluded, Expand-Template, Write-Log, Copy-NewFiles, Get-FileCategory, Resolve-CategoryTarget, Get-FilePraefixSuffix, Get-FileInitials, Get-FileInitialsFromName, Get-PraefixSuffixRegistry, Sync-ProjectRoutesFromSeed, Get-DocFlowMigratedFileName, Test-DocFlowPraefixSuffixKnown, ConvertTo-DocFlowHashtable, Get-DocFlowRelativePath, Write-NamingConventionHint, Get-KuerzelRoutes, Register-Kuerzel, Copy-ReviewedFiles, Lock-DocFlowRun, Unlock-DocFlowRun, Test-DocFlowLockFresh, Test-DocFlowInsideNamedFolder
