@@ -1272,3 +1272,45 @@ Describe 'Invoke-DocFlowEngine (Ende-zu-Ende)' {
         Test-Path (Join-Path $script:e2eShared 'state.json') | Should -BeFalse
     }
 }
+
+Describe 'Get-DocFlowNameProposal' {
+    BeforeAll {
+        $script:proposalRules = @(
+            @{ match = '^(?<initials>[A-Za-z]+)(?<versiontag>_v[0-9]+)?_(?<praefix>[A-Za-z]+)_(?<suffix>[A-Za-z0-9]+)_(?<aufgabennummer>[A-Za-z0-9]+)$' }
+        )
+        $registryPath = Join-Path $TestDrive 'proposal-registry.txt'
+        Set-Content -Path $registryPath -Value @('praefix=Java', 'suffix=Arrays', 'suffix=ArrayList', 'suffix=Streams', 'praefix=Python', 'suffix=Streams', 'suffix=Dict', 'praefix=Datenbanken', 'suffix=SQL')
+        $script:proposalRegistries = @{
+            pairs = Get-PraefixSuffixRegistry -Path $registryPath
+            flat  = [ordered]@{
+                Praefixe = [System.Collections.Generic.HashSet[string]]::new([string[]]@('Java', 'Python'), [System.StringComparer]::OrdinalIgnoreCase)
+                Suffixe  = [System.Collections.Generic.HashSet[string]]::new([string[]]@('Arrays', 'Dict'), [System.StringComparer]::OrdinalIgnoreCase)
+            }
+            none  = $null
+        }
+    }
+
+    It "'<Name>' (<Registry>) wird zu '<Stem>'" -ForEach @(
+        @{ Name = 'pke_v2_Java_Arrays_abc'; Registry = 'pairs'; Known = $null; Stem = 'pke_v2_Java_Arrays_abc'; Compliant = $true; Version = 2; Placeholder = $false; Notes = @() }
+        @{ Name = 'pke Java Arrays Blatt3'; Registry = 'pairs'; Known = $null; Stem = 'pke_Java_Arrays_Blatt3'; Compliant = $false; Version = 0; Placeholder = $false; Notes = @('Initialen aus Dateinamen übernommen') }
+        @{ Name = 'pke Java ArrayList Arrays 4'; Registry = 'pairs'; Known = $null; Stem = 'pke_Java_ArrayList_4'; Compliant = $false; Version = 0; Placeholder = $false; Notes = @('Initialen aus Dateinamen übernommen') }
+        @{ Name = 'pke Streams 4'; Registry = 'pairs'; Known = $null; Stem = 'pke_PLATZHALTER_Streams_4'; Compliant = $false; Version = 0; Placeholder = $true; Notes = @("Suffix 'Streams' passt zu mehreren Präfixen (Java, Python)", 'Initialen aus Dateinamen übernommen') }
+        @{ Name = 'pke JavaArrays 4'; Registry = 'pairs'; Known = $null; Stem = 'pke_Java_Arrays_4'; Compliant = $false; Version = 0; Placeholder = $false; Notes = @('Präfix/Suffix aus zusammengeschriebenem Namen erkannt', 'Initialen aus Dateinamen übernommen') }
+        @{ Name = 'pke Dict 7'; Registry = 'pairs'; Known = $null; Stem = 'pke_Python_Dict_7'; Compliant = $false; Version = 0; Placeholder = $false; Notes = @("Präfix aus Suffix 'Dict' abgeleitet", 'Initialen aus Dateinamen übernommen') }
+        @{ Name = 'pke Java 7'; Registry = 'pairs'; Known = $null; Stem = 'pke_Java_PLATZHALTER_7'; Compliant = $false; Version = 0; Placeholder = $true; Notes = @('Suffix nicht erkannt', 'Initialen aus Dateinamen übernommen') }
+        @{ Name = 'Datenbanken pke 2'; Registry = 'pairs'; Known = $null; Stem = 'pke_Datenbanken_PLATZHALTER_2'; Compliant = $false; Version = 0; Placeholder = $true; Notes = @('Suffix nicht erkannt', 'Initialen aus Dateinamen übernommen') }
+        @{ Name = 'Lösung Übung Java Arrays v3 Aufgabe 5 - Kopie (2)'; Registry = 'pairs'; Known = 'ahf'; Stem = 'ahf_v3_Java_Arrays_5'; Compliant = $false; Version = 3; Placeholder = $false; Notes = @() }
+        @{ Name = 'Kopie von pke Java Arrays final'; Registry = 'pairs'; Known = $null; Stem = 'pke_Java_Arrays_PLATZHALTER'; Compliant = $false; Version = 0; Placeholder = $true; Notes = @('Initialen aus Dateinamen übernommen', 'Aufgabennummer nicht erkannt') }
+        @{ Name = 'irgendwas komplett anderes'; Registry = 'pairs'; Known = $null; Stem = 'PLATZHALTER_PLATZHALTER_PLATZHALTER_anderes'; Compliant = $false; Version = 0; Placeholder = $true; Notes = @('Präfix/Suffix nicht erkannt', 'Initialen nicht erkannt') }
+        @{ Name = 'pke Python Dict 9'; Registry = 'flat'; Known = $null; Stem = 'pke_Python_Dict_9'; Compliant = $false; Version = 0; Placeholder = $false; Notes = @('Initialen aus Dateinamen übernommen') }
+        @{ Name = 'pke Java Arrays 1'; Registry = 'none'; Known = $null; Stem = 'pke_PLATZHALTER_PLATZHALTER_1'; Compliant = $false; Version = 0; Placeholder = $true; Notes = @('Initialen aus Dateinamen übernommen') }
+    ) {
+        $proposal = Get-DocFlowNameProposal -Name $Name -Rules $script:proposalRules -Registry $script:proposalRegistries[$Registry] -KnownInitials $Known
+
+        $proposal.Stem | Should -BeExactly $Stem
+        $proposal.Compliant | Should -Be $Compliant
+        $proposal.Version | Should -Be $Version
+        $proposal.HasPlaceholder | Should -Be $Placeholder
+        @($proposal.Notes) | Should -Be $Notes
+    }
+}
