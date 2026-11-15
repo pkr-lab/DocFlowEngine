@@ -407,6 +407,51 @@ Describe 'Copy-NewFiles: Praefix/Suffix-Whitelist bei aufgabenRoot' {
 
         Test-Path (Join-Path (Join-Path $script:aufgabenRoot2 'Ruby') 'Basics/pke_Ruby_Basics_abc.pdf') | Should -BeTrue
     }
+
+    It 'nennt im Log unbekanntes Praefix und Suffix, wenn die Registry keine Paare enthält' {
+        Set-Content -Path (Join-Path $script:sourceDir2 'pke_Ruby_Basics_abc.pdf') -Value 'dummy'
+        $state = @{ processed = @{}; reviewedFiles = @{} }
+        $registryPath = Join-Path $TestDrive "registry-$(New-Guid).txt"
+        Mock Write-Log -ModuleName DocFlowEngine
+
+        Copy-NewFiles -Sources $script:aufgabenSources -Targets $script:aufgabenTargets -State $state -Rules $script:aufgabenRules -DefaultNameFormat '{originalName}' -AufgabenRoot $script:aufgabenRoot2 -PraefixSuffixRegistry $script:knownRegistry -RegistryFilePath $registryPath -NamingConventionHint $script:hintConfig
+
+        Should -Invoke Write-Log -ModuleName DocFlowEngine -Times 1 -Exactly -ParameterFilter {
+            $Level -eq 'Warning' -and $Message -eq "Datei 'pke_Ruby_Basics_abc.pdf': Präfix 'Ruby' und Suffix 'Basics' nicht in der Whitelist '$registryPath' eingetragen."
+        }
+    }
+
+    It 'nennt im Log nur das unbekannte Suffix, wenn das Praefix in der Registry bekannt ist' {
+        Set-Content -Path (Join-Path $script:sourceDir2 'pke_Java_Basics_abc.pdf') -Value 'dummy'
+        $state = @{ processed = @{}; reviewedFiles = @{} }
+        $registryPath = Join-Path $TestDrive "registry-$(New-Guid).txt"
+        Mock Write-Log -ModuleName DocFlowEngine
+
+        Copy-NewFiles -Sources $script:aufgabenSources -Targets $script:aufgabenTargets -State $state -Rules $script:aufgabenRules -DefaultNameFormat '{originalName}' -AufgabenRoot $script:aufgabenRoot2 -PraefixSuffixRegistry $script:knownRegistry -RegistryFilePath $registryPath -NamingConventionHint $script:hintConfig
+
+        Should -Invoke Write-Log -ModuleName DocFlowEngine -Times 1 -Exactly -ParameterFilter {
+            $Level -eq 'Warning' -and $Message -eq "Datei 'pke_Java_Basics_abc.pdf': Suffix 'Basics' nicht in der Whitelist '$registryPath' eingetragen."
+        }
+    }
+
+    It 'unterscheidet bei einer Paar-Registry zwischen unbekanntem Praefix und unbekanntem Suffix' {
+        Set-Content -Path (Join-Path $script:sourceDir2 'pke_Ruby_Arrays_abc.pdf') -Value 'dummy'
+        Set-Content -Path (Join-Path $script:sourceDir2 'pke_Java_Basics_abc.pdf') -Value 'dummy'
+        $state = @{ processed = @{}; reviewedFiles = @{} }
+        $registryPath = Join-Path $TestDrive "registry-$(New-Guid).txt"
+        Set-Content -Path $registryPath -Value @('praefix=Java', 'suffix=Arrays')
+        $pairRegistry = Get-PraefixSuffixRegistry -Path $registryPath
+        Mock Write-Log -ModuleName DocFlowEngine
+
+        Copy-NewFiles -Sources $script:aufgabenSources -Targets $script:aufgabenTargets -State $state -Rules $script:aufgabenRules -DefaultNameFormat '{originalName}' -AufgabenRoot $script:aufgabenRoot2 -PraefixSuffixRegistry $pairRegistry -RegistryFilePath $registryPath -NamingConventionHint $script:hintConfig
+
+        Should -Invoke Write-Log -ModuleName DocFlowEngine -Times 1 -Exactly -ParameterFilter {
+            $Message -eq "Datei 'pke_Ruby_Arrays_abc.pdf': Präfix 'Ruby' ist nicht in der Whitelist '$registryPath' eingetragen."
+        }
+        Should -Invoke Write-Log -ModuleName DocFlowEngine -Times 1 -Exactly -ParameterFilter {
+            $Message -eq "Datei 'pke_Java_Basics_abc.pdf': Suffix 'Basics' ist für Präfix 'Java' nicht in der Whitelist '$registryPath' eingetragen."
+        }
+    }
 }
 
 Describe 'Lock-DocFlowRun / Unlock-DocFlowRun' {
