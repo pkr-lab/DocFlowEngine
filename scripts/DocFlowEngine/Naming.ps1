@@ -603,12 +603,11 @@ function Find-DocFlowRegistryPairInTokens {
         [Parameter(Mandatory)] $Registry
     )
 
-    $hasToken = { param([string]$Value) (Find-DocFlowTokenIndex -Tokens $Tokens -Used $Used -Value $Value) -ge 0 }
     $result = [PSCustomObject]@{ Praefix = $null; Suffix = $null; Notes = New-Object System.Collections.Generic.List[string] }
 
     $pairs = @(foreach ($p in $Registry.Paare.Keys) { foreach ($s in $Registry.Paare[$p]) { [PSCustomObject]@{ Praefix = $p; Suffix = $s } } })
 
-    $strong = @($pairs | Where-Object { (& $hasToken $_.Praefix) -and (& $hasToken $_.Suffix) })
+    $strong = @($pairs | Where-Object { ((Find-DocFlowTokenIndex -Tokens $Tokens -Used $Used -Value $_.Praefix) -ge 0) -and ((Find-DocFlowTokenIndex -Tokens $Tokens -Used $Used -Value $_.Suffix) -ge 0) })
     if ($strong.Count -gt 1) {
         $longest = ($strong | ForEach-Object { $_.Suffix.Length } | Measure-Object -Maximum).Maximum
         $strong = @($strong | Where-Object { $_.Suffix.Length -eq $longest })
@@ -632,8 +631,8 @@ function Find-DocFlowRegistryPairInTokens {
         $bySubstring = @($bySubstring | Where-Object { ($_.Praefix.Length + $_.Suffix.Length) -eq $longest })
     }
 
-    $bySuffix = @($pairs | Where-Object { & $hasToken $_.Suffix })
-    $byPraefix = @($Registry.Paare.Keys | Where-Object { & $hasToken $_ })
+    $bySuffix = @($pairs | Where-Object { (Find-DocFlowTokenIndex -Tokens $Tokens -Used $Used -Value $_.Suffix) -ge 0 })
+    $byPraefix = @($Registry.Paare.Keys | Where-Object { (Find-DocFlowTokenIndex -Tokens $Tokens -Used $Used -Value $_) -ge 0 })
 
     if ($bySubstring.Count -eq 1) {
         $result.Praefix = $bySubstring[0].Praefix
