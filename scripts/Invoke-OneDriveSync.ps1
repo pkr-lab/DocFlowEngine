@@ -13,4 +13,4 @@ Write-Host "Stosse OneDrive-Sync an: beende und starte OneDrive neu ($Executable
 Stop-Process -Name 'OneDrive' -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 Start-Process -FilePath $ExecutablePath -ArgumentList '/background'
-Write-Host "OneDrive neu gestartet. Das erzwingt einen frischen Dateicheck, ist aber kein garantierter, blockierender Sync-Abschluss - siehe README.md, Abschnitt 'Regelmaessige Automatisierung'."
+Write-Host "OneDrive neu gestartet. Das erzwingt einen frischen Dateicheck, ist aber kein garantierter, blockierender Sync-Abschluss - siehe https://github.com/pkr-lab/pkr-lab-docs/blob/main/DocFlowEngine/nutzung.md."
