@@ -34,7 +34,7 @@ function Get-SourceFiles {
     return $files.Values
 }
 
-function Ensure-TargetDirectories {
+function Initialize-DocFlowTargetDirectories {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [array]$Targets

@@ -9,7 +9,7 @@
     FunctionsToExport = '*'
     CmdletsToExport   = @()
     VariablesToExport = @()
-    AliasesToExport   = @()
+    AliasesToExport   = @('Load-Config', 'Load-State', 'Ensure-TargetDirectories')
     PrivateData       = @{
         PSData = @{
             Tags       = @('documents', 'sorting', 'automation')

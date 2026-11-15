@@ -484,7 +484,7 @@ Describe 'Lock-DocFlowRun / Unlock-DocFlowRun' {
     }
 }
 
-Describe 'Load-Config: Defaults für neue Optionen' {
+Describe 'Import-DocFlowConfig: Defaults für neue Optionen' {
     It 'setzt sinnvolle Defaults für reviewMarker, unknownKuerzelHint und namingConventionHint, wenn sie in der Config fehlen' {
         $configPath = Join-Path $TestDrive 'minimal-config.psd1'
         @'
@@ -495,7 +495,7 @@ Describe 'Load-Config: Defaults für neue Optionen' {
 }
 '@ | Set-Content -Path $configPath
 
-        $config = Load-Config -Path $configPath
+        $config = Import-DocFlowConfig -Path $configPath
 
         $config.reviewMarker.enabled | Should -BeFalse
         $config.reviewMarker.korrigiertFolderName | Should -Be 'Korrigiert'
@@ -589,7 +589,7 @@ Describe 'Get-DocFlowMigratedFileName' {
     }
 }
 
-Describe 'Load-Config: Pfad-Variablen aus paths' {
+Describe 'Import-DocFlowConfig: Pfad-Variablen aus paths' {
     It 'setzt die Werte aus paths in alle Pfadfelder ein, auch verschachtelt' {
         $configPath = Join-Path $TestDrive "paths-config-$(New-Guid).psd1"
         @'
@@ -610,7 +610,7 @@ Describe 'Load-Config: Pfad-Variablen aus paths' {
 }
 '@ | Set-Content -Path $configPath
 
-        $config = Load-Config -Path $configPath
+        $config = Import-DocFlowConfig -Path $configPath
 
         $config.sources[0].path | Should -Be 'C:/Basis/Quelle/'
         $config.targets[0].path | Should -Be 'C:/Basis/Archiv'
@@ -634,7 +634,7 @@ Describe 'Load-Config: Pfad-Variablen aus paths' {
 }
 '@ | Set-Content -Path $configPath
 
-        { Load-Config -Path $configPath } | Should -Throw '*gibtsnicht*'
+        { Import-DocFlowConfig -Path $configPath } | Should -Throw '*gibtsnicht*'
     }
 
     It 'wirft bei einem zirkulären Verweis in paths' {
@@ -648,7 +648,7 @@ Describe 'Load-Config: Pfad-Variablen aus paths' {
 }
 '@ | Set-Content -Path $configPath
 
-        { Load-Config -Path $configPath } | Should -Throw '*Zirkulär*'
+        { Import-DocFlowConfig -Path $configPath } | Should -Throw '*Zirkulär*'
     }
 }
 
@@ -663,7 +663,7 @@ Describe 'Betrieb ohne targets (kein Archiv)' {
 }
 '@ | Set-Content -Path $configPath
 
-        $config = Load-Config -Path $configPath
+        $config = Import-DocFlowConfig -Path $configPath
         @($config.targets).Count | Should -Be 0
     }
 
@@ -676,7 +676,7 @@ Describe 'Betrieb ohne targets (kein Archiv)' {
 }
 '@ | Set-Content -Path $configPath
 
-        { Load-Config -Path $configPath } | Should -Throw '*aufgabenRoot*'
+        { Import-DocFlowConfig -Path $configPath } | Should -Throw '*aufgabenRoot*'
     }
 
     It 'überspringt eine nicht routbare Datei ohne Archiv-Kopie und ohne Zustandseintrag' {
@@ -1070,15 +1070,15 @@ Describe 'Get-DocFlowSuggestedVersionName' {
     }
 }
 
-Describe 'Load-State / Save-State' {
+Describe 'Import-DocFlowState / Save-State' {
     It 'behält einelementige targets-Listen beim Speichern und erneuten Laden als Liste' {
         $statePath = Join-Path $TestDrive "state-$(New-Guid).json"
         $state = @{ processed = @{ 'a|b.pdf' = [ordered]@{ source = 'b.pdf'; targets = @('ziel/b.pdf'); processedAt = '2026-01-01T00:00:00' } }; reviewedFiles = @{} }
 
         Save-State -StatePath $statePath -State $state
-        $reloaded = Load-State -StatePath $statePath
+        $reloaded = Import-DocFlowState -StatePath $statePath
         Save-State -StatePath $statePath -State $reloaded
-        $reloadedAgain = Load-State -StatePath $statePath
+        $reloadedAgain = Import-DocFlowState -StatePath $statePath
 
         , $reloadedAgain.processed['a|b.pdf'].targets | Should -BeOfType [array]
         @($reloadedAgain.processed['a|b.pdf'].targets) | Should -Be @('ziel/b.pdf')
@@ -1089,7 +1089,7 @@ Describe 'Load-State / Save-State' {
         $statePath = Join-Path $TestDrive "state-$(New-Guid).json"
         Set-Content -Path $statePath -Value '{ "processed": { "k": { "targets": [] } }, "reviewedFiles": {} }'
 
-        $reloaded = Load-State -StatePath $statePath
+        $reloaded = Import-DocFlowState -StatePath $statePath
 
         , $reloaded.processed['k'].targets | Should -BeOfType [array]
         @($reloaded.processed['k'].targets).Count | Should -Be 0
@@ -1112,5 +1112,21 @@ Describe 'Copy-NewFiles: Dateinamen mit eckigen Klammern' {
 
         Test-Path -LiteralPath (Join-Path (Join-Path $targetDir 'Klasse [A]') 'Bericht [1].pdf') | Should -BeTrue
         $state.processed.Count | Should -Be 1
+    }
+}
+
+Describe 'Modul-Exporte' {
+    It 'stellt die früheren Funktionsnamen als Aliase bereit' -ForEach @(
+        @{ Alias = 'Load-Config'; Target = 'Import-DocFlowConfig' }
+        @{ Alias = 'Load-State'; Target = 'Import-DocFlowState' }
+        @{ Alias = 'Ensure-TargetDirectories'; Target = 'Initialize-DocFlowTargetDirectories' }
+    ) {
+        (Get-Command -Name $Alias).ResolvedCommand.Name | Should -Be $Target
+    }
+
+    It 'exportiert die Aliase auch beim Import über das Modulmanifest' {
+        $manifest = Join-Path $PSScriptRoot '../scripts/DocFlowEngine.psd1'
+        $aliases = & (Get-Process -Id $PID).Path -NoProfile -Command "Import-Module '$manifest' -WarningAction SilentlyContinue; (Get-Module DocFlowEngine).ExportedAliases.Keys -join ','"
+        ($aliases -split ',' | Sort-Object) | Should -Be @('Ensure-TargetDirectories', 'Load-Config', 'Load-State')
     }
 }
