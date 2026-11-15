@@ -85,8 +85,7 @@ function Copy-ReviewedFiles {
         return
     }
 
-    $unknownKuerzelSuffix = $Script:UnknownKuerzelHintSuffix
-    Remove-DocFlowOrphanedHintFiles -Directory $AufgabenRoot -HintSuffixes @($unknownKuerzelSuffix)
+    Remove-DocFlowOrphanedHintFiles -Directory $AufgabenRoot -HintSuffixes @($Script:UnknownKuerzelHintSuffix)
 
     $korrigiertFolderName = $ReviewMarker.korrigiertFolderName
     if (-not $korrigiertFolderName) {
@@ -101,7 +100,7 @@ function Copy-ReviewedFiles {
             continue
         }
 
-        if ($item.Name.EndsWith($unknownKuerzelSuffix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        if ($item.Name.EndsWith($Script:UnknownKuerzelHintSuffix, [System.StringComparison]::OrdinalIgnoreCase)) {
             continue
         }
 
@@ -119,7 +118,7 @@ function Copy-ReviewedFiles {
         $originalStem = $nameWithoutExtension.Substring(0, $markerMatch.Index) -replace $Script:DatePrefixPattern, ''
         $kuerzel = Get-FileInitialsFromName -Name $originalStem -Rules $Rules
         $kuerzelKey = if ($kuerzel) { $kuerzel.ToLowerInvariant() } else { $null }
-        $hintPath = Join-Path $item.DirectoryName "$($item.Name)$unknownKuerzelSuffix"
+        $hintPath = Join-Path $item.DirectoryName "$($item.Name)$Script:UnknownKuerzelHintSuffix"
 
         if ($kuerzelKey -and $KuerzelRoutes.ContainsKey($kuerzelKey)) {
             $studentFolder = $KuerzelRoutes[$kuerzelKey]
