@@ -30,16 +30,6 @@ function New-RenameResult {
     return [PSCustomObject]@{ Status = $Status; Ordner = $Item.DirectoryName; Alt = $Item.Name; Neu = $NewName; Hinweise = $Notes; AlterPfad = $Item.FullName; NeuerPfad = $NewPath; Ausgefuehrt = 'nein' }
 }
 
-function Get-RenameStem {
-    param(
-        [Parameter(Mandatory)] $Proposal,
-        [Parameter(Mandatory)] [int]$Version
-    )
-
-    $versionPart = if ($Version -gt 0) { "_v$Version" } else { '' }
-    return "$($Proposal.Initials)$($versionPart)_$($Proposal.Praefix)_$($Proposal.Suffix)_$($Proposal.Aufgabennummer)"
-}
-
 if ($Undo) {
     if (-not (Test-Path -LiteralPath $Undo)) {
         throw "Undo-Datei '$Undo' wurde nicht gefunden."
@@ -222,11 +212,11 @@ try {
         }
 
         $version = $proposal.Version
-        $stem = Get-RenameStem -Proposal $proposal -Version $version
+        $stem = New-DocFlowSubmissionStem -Initials $proposal.Initials -Version $version -Praefix $proposal.Praefix -Suffix $proposal.Suffix -Aufgabennummer $proposal.Aufgabennummer
         $destinationPath = Join-Path $item.DirectoryName "$stem$extension"
         while (((Test-Path -LiteralPath $destinationPath) -and -not $destinationPath.Equals($item.FullName, [System.StringComparison]::OrdinalIgnoreCase)) -or $plannedDestinations.Contains($destinationPath)) {
             $version = [Math]::Max($version, 1) + 1
-            $stem = Get-RenameStem -Proposal $proposal -Version $version
+            $stem = New-DocFlowSubmissionStem -Initials $proposal.Initials -Version $version -Praefix $proposal.Praefix -Suffix $proposal.Suffix -Aufgabennummer $proposal.Aufgabennummer
             $destinationPath = Join-Path $item.DirectoryName "$stem$extension"
         }
         if ($version -ne $proposal.Version) {
